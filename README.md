@@ -220,11 +220,92 @@ In this architecture, almost all inter-process communication is routed through t
 
 #### Architecture Verdict
 
-...
+We will be going with the second approach and architecture B, as it is the most flexible and enables the most modular design. This will allow us to develop the components in isolation, potentially in different programming languages, and test them independently, before integrating them together.
 
 #### Interface Specification (schema)
 
-...
+There are 3 main types of data that will be passed between components:
+
+- **Word Events**: A single word, with the start time, end time, and confidence level of the transcription.
+  - These will be emitted by the Speech to Text component as soon as they are available.
+  - These will be consumed by the Punctuation Inference component.
+- **Gesture Events**: A single gesture, with the start time, end time, and average confidence level of the gesture detection.
+  - These will be emitted by the Gesture Recognition component when the gesture is detected, and when it is no longer detected, this will allow us to better handle real-time transcription.
+    - when a gesture is first detected, the end time will be `None`
+  - These will be consumed by the Punctuation Inference component, and the Orchestrator component.
+    - Orchestrator will use these to display the gestures to the user
+    - Punctuation Inference will use these to determine where to place punctuation in the text
+- **Text**: A segment of text, with the punctuation inferred by the Punctuation Inference component.
+
+The Orchestrator will be responsible for starting and stopping the other components, and for capturing logs and traces from the other components. It will also be responsible for displaying or storing these logs in a useful way in real-time.
+
+The schema for the data types will be as follows (in rust syntax as it is the most expressive):
+
+> [!NOTE]
+> Some invariants regarding the data types:
+>
+> - The start time of a word or gesture event will always be less than the end time
+> - The audio and video data start and end at the same time, and are synchronized.
+>   - that is to say, a start time of 0 for a word event represents the same "real-world" time as a start time of 0 for a gesture event
+
+```rust
+// Word Events
+struct WordEvent {
+  // the word that was transcribed
+  word: String,
+  // start time of the word in seconds, relative to the start of the audio file
+  start_time: f64,
+  // end time of the word in seconds, relative to the start of the audio file
+  end_time: f64,
+  // confidence level of the transcription, between 0 and 1
+  confidence: f64,
+}
+
+// Gesture Events
+#[serde(untagged)]
+enum GestureEvent {
+  Start {
+    // the punctuation character associated with the gesture that was detected
+    punctuation: char,
+    // start time of the gesture in seconds, relative to the start of the video file
+    start_time: f64,
+  }
+  End {
+    // the punctuation character associated with the gesture that was detected
+    punctuation: char,
+    // start time of the gesture in seconds, relative to the start of the video file
+    start_time: f64,
+    // end time of the gesture in seconds, relative to the start of the video file
+    end_time: f64,
+    // average confidence level of the gesture detection, between 0 and 1
+    confidence: f64,
+  }
+}
+// What this means is that when a gesture is first detected, end_time and confidence will 
+// not be present, when the gesture is no longer detected, end_time and confidence 
+// will be present
+// 
+// examples of the 2 variants:
+// ```json
+// {
+//   "punctuation": "!",
+//   "start_time": 0.0
+// }
+// ```
+// ```json
+// {
+//   "punctuation": "!",
+//   "start_time": 0.0,
+//   "end_time": 1.0,
+//   "confidence": 0.9
+// }
+
+// Text
+struct Text {
+  // the text segment with the punctuation inferred by the Punctuation Inference component
+  text: String,
+}
+```
 
 ### Phase 1: Punctuation Inference Algorithm Design
 
