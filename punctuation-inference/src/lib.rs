@@ -40,11 +40,7 @@
 //!
 //! "close enough" is defined by some thresholds:
 //!
-//! - `WORD_END_GESTURE_START_TIME_THRESHOLD`: the maximum time difference between the end of a word and the end of a gesture for the gesture to placed immediately after the word
-//! - `GESTURE_END_WORD_START_TIME_THRESHOLD`: the maximum time difference between the end of a gesture and the start of a word for the gesture to be placed immediately before the word
-//! - `WORD_START_GESTURE_START_TIME_THRESHOLD`: the maximum time difference between the start of a word and the start of a gesture for the gesture to be placed sometime after the word
-//!
-//! - ``
+//! -
 //!
 //!
 
@@ -56,32 +52,28 @@ use either::Either;
 
 use crate::events::{GestureEvent, WordEvent};
 
-/// Default time threshold for the maximum time difference between the end of a word and the end of a gesture for the gesture to be placed immediately after the word
-/// This is useful for gestures that are detected after the word is fully transcribed
+const WORD_END_GESTURE_END_TIME_THRESHOLD: f64 = 0.2;
+const WORD_START_GESTURE_END_TIME_THRESHOLD: f64 = 0.2;
+const WORD_START_GESTURE_START_TIME_THRESHOLD: f64 = 0.2;
 const WORD_END_GESTURE_START_TIME_THRESHOLD: f64 = 0.2;
 
-/// Default time threshold for the maximum time difference between the end of a gesture and the start of a word for the gesture to be placed immediately before the word
-/// This is useful for gestures that are detected before the word is fully transcribed
-const GESTURE_END_WORD_START_TIME_THRESHOLD: f64 = 0.2;
-
-/// Default time threshold for the maximum time difference between the start of a word and the start of a gesture for the gesture to be placed sometime after the word
-/// This is useful for gestures that are detected before the word is fully transcribed
-const WORD_START_GESTURE_START_TIME_THRESHOLD: f64 = 0.2;
-
 pub trait PunctuationInference {
-    fn process_word_event(&mut self, word: WordEvent);
-    fn process_gesture_event(&mut self, gesture: GestureEvent);
-    fn get_text(&self) -> String;
+    fn register_word_event(&mut self, word: WordEvent);
+    fn register_gesture_event(&mut self, gesture: GestureEvent);
+    /// processes all registered events and returns the text
+    fn get_text(&mut self) -> String;
 }
 
 #[derive(Debug, Default)]
 pub struct PunctuationInferenceBuilder {
-    /// see: [`WORD_END_GESTURE_START_TIME_THRESHOLD`]
+    /// see: [`WORD_END_GESTURE_END_TIME_THRESHOLD`]
     word_end_gesture_end_threshold: Option<f64>,
     /// see: [`GESTURE_END_WORD_START_TIME_THRESHOLD`]
-    gesture_end_word_start_threshold: Option<f64>,
+    word_start_gesture_end_threshold: Option<f64>,
     /// see: [`WORD_START_GESTURE_START_TIME_THRESHOLD`]
     word_start_gesture_start_threshold: Option<f64>,
+    /// see: [`WORD_END_GESTURE_START_TIME_THRESHOLD`]
+    word_end_gesture_start_threshold: Option<f64>,
 }
 
 impl PunctuationInferenceBuilder {
@@ -101,7 +93,7 @@ impl PunctuationInferenceBuilder {
         mut self,
         gesture_end_word_start_threshold: f64,
     ) -> Self {
-        self.gesture_end_word_start_threshold = Some(gesture_end_word_start_threshold);
+        self.word_start_gesture_end_threshold = Some(gesture_end_word_start_threshold);
         self
     }
 
@@ -117,13 +109,16 @@ impl PunctuationInferenceBuilder {
         PunctuationInferenceImpl {
             word_end_gesture_end_threshold: self
                 .word_end_gesture_end_threshold
-                .unwrap_or(WORD_END_GESTURE_START_TIME_THRESHOLD),
-            gesture_end_word_start_threshold: self
-                .gesture_end_word_start_threshold
-                .unwrap_or(GESTURE_END_WORD_START_TIME_THRESHOLD),
+                .unwrap_or(WORD_END_GESTURE_END_TIME_THRESHOLD),
+            word_start_gesture_end_threshold: self
+                .word_start_gesture_end_threshold
+                .unwrap_or(WORD_START_GESTURE_END_TIME_THRESHOLD),
             word_start_gesture_start_threshold: self
                 .word_start_gesture_start_threshold
                 .unwrap_or(WORD_START_GESTURE_START_TIME_THRESHOLD),
+            word_end_gesture_start_threshold: self
+                .word_end_gesture_start_threshold
+                .unwrap_or(WORD_END_GESTURE_START_TIME_THRESHOLD),
 
             output: Vec::new(),
             last_gesture_start: None,
@@ -140,9 +135,11 @@ pub struct PunctuationInferenceImpl {
     /// the maximum time difference between the end of a word and the end of a gesture for the gesture to be placed after the word
     word_end_gesture_end_threshold: f64,
     /// the maximum time difference between the end of a gesture and the start of a word for the gesture to be placed before the word
-    gesture_end_word_start_threshold: f64,
+    word_start_gesture_end_threshold: f64,
     /// the maximum time difference between the start of a word and the start of a gesture for the gesture to be placed after the word
     word_start_gesture_start_threshold: f64,
+    /// the maximum time difference between the start of a word and the start of a gesture for the gesture to be placed after the word
+    word_end_gesture_start_threshold: f64,
     /// Queue of words and punctuation that have been processed so far
     output: Vec<Either<WordEvent, GestureEvent>>,
     /// the last gesture start event that we received
@@ -154,18 +151,18 @@ pub struct PunctuationInferenceImpl {
 }
 
 impl PunctuationInference for PunctuationInferenceImpl {
-    fn process_word_event(&mut self, word: WordEvent) {
+    fn register_word_event(&mut self, word: WordEvent) {
         self.word_queue.push_back(word);
-        self.process_queues();
     }
 
-    fn process_gesture_event(&mut self, gesture: GestureEvent) {
+    fn register_gesture_event(&mut self, gesture: GestureEvent) {
         // if the gesture is an end gesture, we need to remove the corresponding start gesture from the queue before processing
         self.gesture_queue.push_back(gesture);
-        self.process_queues();
     }
 
-    fn get_text(&self) -> String {
+    fn get_text(&mut self) -> String {
+        self.process_queues();
+
         if self.output.is_empty() {
             return String::new();
         }
@@ -221,59 +218,82 @@ impl PunctuationInference for PunctuationInferenceImpl {
 impl PunctuationInferenceImpl {
     /// Process the queues of words and gestures
     pub fn process_queues(&mut self) {
-        match (self.word_queue.front(), self.gesture_queue.front()) {
-            // if the gesture is a start gesture, we track it but don't emit it
-            (_, Some(GestureEvent::Start { .. })) => {
-                self.last_gesture_start = self.gesture_queue.pop_front();
-            }
-            // if we have an end gesture and no word, we wait
-            (None, Some(GestureEvent::End { .. })) => {}
-
-            // if we have a word and a gesture, but the gesture ends before the word starts, we skip that gesture
-            // and try again
-            (
-                Some(word),
-                Some(GestureEvent::End {
-                    end_time: gesture_end_time,
-                    ..
-                }),
-            ) if word.start_time > *gesture_end_time - self.gesture_end_word_start_threshold => {
-                self.gesture_queue.pop_front();
-                self.last_gesture_start = None;
-                self.process_queues();
-            }
-
-            // if we have a word that starts within a threshold of the gesture, we emit that word's until the next word doesn't end within a threshold of the gesture end time, then emit the gesture
-            (
-                Some(word),
-                Some(GestureEvent::End {
-                    start_time: gesture_start_time,
-                    end_time: gesture_end_time,
-                    ..
-                }),
-            ) if word.start_time
-                <= *gesture_start_time + self.word_start_gesture_start_threshold
-                && word.end_time <= *gesture_end_time + self.word_end_gesture_end_threshold =>
-            {
-                let gesture_end_time = *gesture_end_time;
-                while let Some(word) = self.word_queue.front() {
-                    if word.end_time <= gesture_end_time + self.word_end_gesture_end_threshold {
-                        self.emit_word();
-                    } else {
-                        break;
-                    }
+        loop {
+            match (self.word_queue.front(), self.gesture_queue.front()) {
+                // if the gesture is a start gesture, we track it but don't emit it
+                (_, Some(GestureEvent::Start { .. })) => {
+                    self.last_gesture_start = self.gesture_queue.pop_front();
                 }
-                self.emit_gesture();
-                self.last_gesture_start = None;
-            }
 
-            // if we have a word and no gesture has started yet, we emit the word
-            (Some(_), None) if self.last_gesture_start.is_none() => {
-                self.emit_word();
-            }
+                // if we have an end gesture and no words left, we can stop
+                (None, Some(_)) => {
+                    break;
+                }
+                // if we have no words or gestures left, we can stop
+                (None, None) => break,
 
-            // if the queue is empty, we're done
-            (_, _) => {}
+                // if we have a word and no gestures, we emit the word
+                (Some(_), None) => {
+                    self.emit_word();
+                }
+
+                // if we have a word and a gesture, but the word ends before the gesture starts, we emit that word and skip the gesture
+                (
+                    Some(word),
+                    Some(GestureEvent::End {
+                        start_time: gesture_start_time,
+                        ..
+                    }),
+                ) if f64::abs(word.end_time - *gesture_start_time)
+                    <= self.word_end_gesture_start_threshold =>
+                {
+                    self.emit_word();
+                }
+
+                // if we have a word and a gesture, but the gesture ends before the word starts, we skip that gesture
+                // and try again
+                (
+                    Some(word),
+                    Some(GestureEvent::End {
+                        end_time: gesture_end_time,
+                        ..
+                    }),
+                ) if f64::abs(word.start_time - *gesture_end_time)
+                    <= self.word_start_gesture_end_threshold =>
+                {
+                    self.gesture_queue.pop_front();
+                    self.last_gesture_start = None;
+                }
+
+                // if we have a word that starts within a threshold of the gesture, we emit that word's until the next word doesn't end within a threshold of the gesture end time, then emit the gesture
+                (
+                    Some(word),
+                    Some(GestureEvent::End {
+                        start_time: gesture_start_time,
+                        end_time: gesture_end_time,
+                        ..
+                    }),
+                ) if f64::abs(word.start_time - *gesture_start_time)
+                    <= self.word_start_gesture_start_threshold
+                    && word.end_time <= *gesture_end_time + self.word_end_gesture_end_threshold =>
+                {
+                    let gesture_end_time = *gesture_end_time;
+                    while let Some(word) = self.word_queue.front() {
+                        if word.end_time <= gesture_end_time + self.word_end_gesture_end_threshold {
+                            self.emit_word();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.emit_gesture();
+                    self.last_gesture_start = None;
+                }
+
+                // otherwise, we emit the word
+                (Some(_), Some(GestureEvent::End { .. })) => {
+                    self.emit_word();
+                }
+            }
         }
     }
 
@@ -301,7 +321,7 @@ mod tests {
     #[test]
     /// If we have no events, we should have no text
     fn test_no_events() {
-        let punctuation_inference = PunctuationInferenceBuilder::new().build();
+        let mut punctuation_inference = PunctuationInferenceBuilder::new().build();
         assert_eq!(punctuation_inference.get_text(), "");
     }
 
@@ -310,11 +330,11 @@ mod tests {
     /// This is because we can't infer punctuation without words
     fn test_only_gestures() {
         let mut punctuation_inference = PunctuationInferenceBuilder::new().build();
-        punctuation_inference.process_gesture_event(GestureEvent::Start {
+        punctuation_inference.register_gesture_event(GestureEvent::Start {
             punctuation: '!',
             start_time: 0.0,
         });
-        punctuation_inference.process_gesture_event(GestureEvent::End {
+        punctuation_inference.register_gesture_event(GestureEvent::End {
             punctuation: '!',
             start_time: 0.0,
             end_time: 1.0,
@@ -331,7 +351,7 @@ mod tests {
     fn test_only_words(#[case] words: Vec<(&str, f64, f64, f64)>, #[case] expected_text: &str) {
         let mut punctuation_inference = PunctuationInferenceBuilder::new().build();
         for (word, start_time, end_time, confidence) in words {
-            punctuation_inference.process_word_event(WordEvent {
+            punctuation_inference.register_word_event(WordEvent {
                 word: word.to_string(),
                 start_time,
                 end_time,
@@ -383,8 +403,50 @@ mod tests {
         // process the events in order
         for event in events {
             match event {
-                Either::Left(word) => punctuation_inference.process_word_event(word),
-                Either::Right(gesture) => punctuation_inference.process_gesture_event(gesture),
+                Either::Left(word) => punctuation_inference.register_word_event(word),
+                Either::Right(gesture) => punctuation_inference.register_gesture_event(gesture),
+            }
+        }
+
+        assert_eq!(punctuation_inference.get_text(), expected_text);
+    }
+
+    #[rstest]
+    /// basic tests with two words and one gesture
+    #[case::gesture_way_before_words(
+        vec![Either::Right(GestureEvent::new_start('!', 0.0)),  Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("hello", 1.5, 2.0, 0.9)), Either::Left(WordEvent::new("world", 2.5, 3.0, 0.9))],
+        "hello world",
+    )]
+    #[case::gesture_way_after_words(
+        vec![Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("world", 1.0, 2.0, 0.9)), Either::Right(GestureEvent::new_start('!', 2.5)), Either::Right(GestureEvent::new_end('!', 2.5, 3.0, 0.9))],
+        "hello world",
+    )]
+    #[case::gesture_for_first_word(
+        vec![Either::Right(GestureEvent::new_start('!', 0.0)),  Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("hello", 0.1, 1.2, 0.9)), Either::Left(WordEvent::new("world", 1.5, 3.0, 0.9))],
+        "hello! world",
+    )]
+    #[case::gesture_for_second_word(
+        vec![Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Right(GestureEvent::new_start('!', 1.5)), Either::Right(GestureEvent::new_end('!', 1.5, 2.0, 0.9)), Either::Left(WordEvent::new("world", 1.5, 2.1, 0.9))],
+        "hello world!",
+    )]
+    #[case::gesture_for_second_word(
+        vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Right(GestureEvent::new_end('!', 0.0, 1.9, 0.9)), Either::Left(WordEvent::new("world", 1.1, 2.0, 0.9))],
+        "hello world!",
+    )]
+    #[case::gesture_for_second_word(
+        vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("world", 1.1, 2.0, 0.9)), Either::Right(GestureEvent::new_end('!', 0.0, 2.1, 0.9))],
+        "hello world!",
+    )]
+    fn test_two_words_one_gesture(
+        #[case] events: Vec<Either<WordEvent, GestureEvent>>,
+        #[case] expected_text: &str,
+    ) {
+        let mut punctuation_inference = PunctuationInferenceBuilder::new().build();
+        // process the events in order
+        for event in events {
+            match event {
+                Either::Left(word) => punctuation_inference.register_word_event(word),
+                Either::Right(gesture) => punctuation_inference.register_gesture_event(gesture),
             }
         }
 
