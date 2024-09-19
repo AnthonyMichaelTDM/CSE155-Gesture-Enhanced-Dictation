@@ -1,1 +1,11 @@
 workspace.members = ["punctuation-inference"]
+workspace.resolver = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+
+[profile.tarpaulin]
+inherits = "test"
+opt-level = 0
