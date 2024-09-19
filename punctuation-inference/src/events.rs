@@ -13,6 +13,17 @@ pub struct WordEvent {
     pub confidence: f64,
 }
 
+impl WordEvent {
+    pub fn new<S: ToString>(word: S, start_time: f64, end_time: f64, confidence: f64) -> Self {
+        Self {
+            word: word.to_string(),
+            start_time,
+            end_time,
+            confidence,
+        }
+    }
+}
+
 /// Gesture Events
 /// What this means is that when a gesture is first detected, end_time and confidence will
 /// not be present, when the gesture is no longer detected, end_time and confidence
@@ -32,7 +43,7 @@ pub struct WordEvent {
 ///   "end_time": 1.0,
 ///   "confidence": 0.9
 /// }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GestureEvent {
     Start {
@@ -54,6 +65,22 @@ pub enum GestureEvent {
 }
 
 impl GestureEvent {
+    pub fn new_start(punctuation: char, start_time: f64) -> Self {
+        Self::Start {
+            punctuation,
+            start_time,
+        }
+    }
+
+    pub fn new_end(punctuation: char, start_time: f64, end_time: f64, confidence: f64) -> Self {
+        Self::End {
+            punctuation,
+            start_time,
+            end_time,
+            confidence,
+        }
+    }
+
     pub fn start_time(&self) -> f64 {
         match self {
             GestureEvent::Start { start_time, .. } => *start_time,
