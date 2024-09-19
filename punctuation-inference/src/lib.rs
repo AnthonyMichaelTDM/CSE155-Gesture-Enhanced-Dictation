@@ -364,35 +364,67 @@ mod tests {
     #[rstest]
     /// basic tests with one word and one gesture
     #[case::gesture_way_before_word(
-            vec![Either::Right(GestureEvent::new_start('!', 0.0)),  Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("hello", 1.5, 2.0, 0.9))],
+            vec![
+                Either::Right(GestureEvent::new_start('!', 0.0)),
+                Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)),
+                Either::Left(WordEvent::new("hello", 1.0+2.*WORD_START_GESTURE_END_TIME_THRESHOLD, 2.0+2.*WORD_START_GESTURE_END_TIME_THRESHOLD, 0.9))
+            ],
             "hello",
         )]
     #[case::gesture_way_after_word(
-            vec![Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Right(GestureEvent::new_start('!', 1.5)), Either::Right(GestureEvent::new_end('!', 1.5, 2.0, 0.9))],
+            vec![
+                Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)),
+                Either::Right(GestureEvent::new_start('!', 1.0+2.*WORD_END_GESTURE_START_TIME_THRESHOLD)),
+                Either::Right(GestureEvent::new_end('!', 1.0+2.*WORD_END_GESTURE_START_TIME_THRESHOLD, 2.0+2.*WORD_END_GESTURE_START_TIME_THRESHOLD, 0.9))
+            ],
             "hello",
         )]
     #[case::gesture_overlaps_word(
-            vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)),Either::Left( WordEvent::new("hello", 0.0, 1.0, 0.9))],
+            vec![
+                Either::Right(GestureEvent::new_start('!', 0.0)),
+                Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)),
+                Either::Left( WordEvent::new("hello", 0.0, 1.0, 0.9))
+            ],
             "hello!",
         )]
     #[case::gesture_overlaps_word(
-            vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Left( WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9))],
+            vec![
+                Either::Right(GestureEvent::new_start('!', 0.0)),
+                Either::Left( WordEvent::new("hello", 0.0, 1.0, 0.9)),
+                Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9))
+            ],
             "hello!",
         )]
     #[case::gesture_start_before_word(
-            vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Left( WordEvent::new("hello", 0.1, 1.0, 0.9)), Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9))],
+            vec![
+                Either::Right(GestureEvent::new_start('!', 0.0)),
+                Either::Left( WordEvent::new("hello",0.5*WORD_START_GESTURE_START_TIME_THRESHOLD, 1.0, 0.9)),
+                Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9))
+            ],
             "hello!",
         )]
     #[case::gesture_start_before_word(
-            vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Right(GestureEvent::new_end('!', 0.0, 0.2, 0.9)), Either::Left( WordEvent::new("hello", 0.1, 1.0, 0.9))],
+            vec![
+                Either::Right(GestureEvent::new_start('!', 0.0)),
+                Either::Right(GestureEvent::new_end('!', 0.0, 2.*WORD_END_GESTURE_START_TIME_THRESHOLD, 0.9)),
+                Either::Left( WordEvent::new("hello", 0.5*WORD_START_GESTURE_START_TIME_THRESHOLD, 1.0, 0.9))
+            ],
             "hello",
         )]
     #[case::gesture_end_after_word(
-            vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)), Either::Left( WordEvent::new("hello", 0.9, 1.5, 0.9))],
+            vec![
+                Either::Right(GestureEvent::new_start('!', 0.0)),
+                Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)),
+                Either::Left( WordEvent::new("hello", 1.0 -0.5*WORD_START_GESTURE_END_TIME_THRESHOLD, 1.0 + 2.*WORD_END_GESTURE_END_TIME_THRESHOLD, 0.9))
+            ],
             "hello",
         )]
     #[case::gesture_end_after_word(
-            vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Right(GestureEvent::new_end('!', 0.0, 1.4, 0.9)), Either::Left( WordEvent::new("hello", 0.1, 1.5, 0.9))],
+            vec![
+                Either::Right(GestureEvent::new_start('!', 0.0)),
+                Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)),
+                Either::Left( WordEvent::new("hello", 0.5*WORD_START_GESTURE_START_TIME_THRESHOLD, 1.+0.5*WORD_END_GESTURE_END_TIME_THRESHOLD, 0.9))
+            ],
             "hello!",
         )]
     fn test_one_word_one_gesture(
@@ -414,27 +446,57 @@ mod tests {
     #[rstest]
     /// basic tests with two words and one gesture
     #[case::gesture_way_before_words(
-        vec![Either::Right(GestureEvent::new_start('!', 0.0)),  Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("hello", 1.5, 2.0, 0.9)), Either::Left(WordEvent::new("world", 2.5, 3.0, 0.9))],
+        vec![
+            Either::Right(GestureEvent::new_start('!', 0.0)),
+            Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)),
+            Either::Left(WordEvent::new("hello", 1.0+2.*WORD_START_GESTURE_END_TIME_THRESHOLD, 2.0, 0.9)), 
+            Either::Left(WordEvent::new("world", 2.0, 3.0, 0.9))
+        ],
         "hello world",
     )]
     #[case::gesture_way_after_words(
-        vec![Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("world", 1.0, 2.0, 0.9)), Either::Right(GestureEvent::new_start('!', 2.5)), Either::Right(GestureEvent::new_end('!', 2.5, 3.0, 0.9))],
+        vec![
+            Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)),
+            Either::Left(WordEvent::new("world", 1.0, 2.0, 0.9)),
+            Either::Right(GestureEvent::new_start('!', 2.+2.*WORD_END_GESTURE_START_TIME_THRESHOLD)),
+            Either::Right(GestureEvent::new_end('!', 2.+2.*WORD_END_GESTURE_START_TIME_THRESHOLD, 3., 0.9))
+        ],
         "hello world",
     )]
     #[case::gesture_for_first_word(
-        vec![Either::Right(GestureEvent::new_start('!', 0.0)),  Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("hello", 0.1, 1.2, 0.9)), Either::Left(WordEvent::new("world", 1.5, 3.0, 0.9))],
+        vec![
+            Either::Right(GestureEvent::new_start('!', 0.0)),
+            Either::Right(GestureEvent::new_end('!', 0.0, 1.0, 0.9)),
+            Either::Left(WordEvent::new("hello", 0.5*WORD_START_GESTURE_START_TIME_THRESHOLD, 1.0+0.5*WORD_END_GESTURE_END_TIME_THRESHOLD, 0.9)),
+            Either::Left(WordEvent::new("world", 2.0, 3.0, 0.9))
+        ],
         "hello! world",
     )]
     #[case::gesture_for_second_word(
-        vec![Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Right(GestureEvent::new_start('!', 1.5)), Either::Right(GestureEvent::new_end('!', 1.5, 2.0, 0.9)), Either::Left(WordEvent::new("world", 1.5, 2.1, 0.9))],
+        vec![
+            Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)),
+            Either::Right(GestureEvent::new_start('!', 1.+2.*WORD_END_GESTURE_START_TIME_THRESHOLD)),
+            Either::Right(GestureEvent::new_end('!', 1.+2.*WORD_END_GESTURE_START_TIME_THRESHOLD, 2.0, 0.9)),
+            Either::Left(WordEvent::new("world", 1.+2.*WORD_END_GESTURE_START_TIME_THRESHOLD, 2.0+0.5*WORD_END_GESTURE_END_TIME_THRESHOLD, 0.9))
+        ],
         "hello world!",
     )]
     #[case::gesture_for_second_word(
-        vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Right(GestureEvent::new_end('!', 0.0, 1.9, 0.9)), Either::Left(WordEvent::new("world", 1.1, 2.0, 0.9))],
+        vec![
+            Either::Right(GestureEvent::new_start('!', 0.0)),
+            Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)),
+            Either::Right(GestureEvent::new_end('!', 0.0, 2., 0.9)),
+            Either::Left(WordEvent::new("world", 1.+0.5*WORD_START_GESTURE_END_TIME_THRESHOLD, 2.+0.5*WORD_END_GESTURE_END_TIME_THRESHOLD, 0.9))
+        ],
         "hello world!",
     )]
     #[case::gesture_for_second_word(
-        vec![Either::Right(GestureEvent::new_start('!', 0.0)), Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)), Either::Left(WordEvent::new("world", 1.1, 2.0, 0.9)), Either::Right(GestureEvent::new_end('!', 0.0, 2.1, 0.9))],
+        vec![
+            Either::Right(GestureEvent::new_start('!', 0.0)),
+            Either::Left(WordEvent::new("hello", 0.0, 1.0, 0.9)),
+            Either::Left(WordEvent::new("world", 1.0, 2.0, 0.9)),
+            Either::Right(GestureEvent::new_end('!', 0.0, 2.+0.5*WORD_END_GESTURE_START_TIME_THRESHOLD, 0.9))
+        ],
         "hello world!",
     )]
     fn test_two_words_one_gesture(
