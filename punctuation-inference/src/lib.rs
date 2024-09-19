@@ -199,16 +199,12 @@ impl PunctuationInference for PunctuationInferenceImpl {
                 }
             });
 
-        // Handle the last element separately
-        match self.output.last() {
-            // if the last element is a word
-            Some(Either::Left(word)) => {
-                if !result.is_empty() {
-                    result.push(' ');
-                }
-                result.push_str(&word.word);
+        // Handle the last element separately (if it's a word)
+        if let Some(Either::Left(word)) = self.output.last() {
+            if !result.is_empty() {
+                result.push(' ');
             }
-            _ => {}
+            result.push_str(&word.word);
         }
 
         result
@@ -300,14 +296,14 @@ impl PunctuationInferenceImpl {
     /// pop a word from the word queue into the output queue
     fn emit_word(&mut self) {
         if let Some(word) = self.word_queue.pop_front() {
-            self.output.push(Either::Left(word.clone()));
+            self.output.push(Either::Left(word));
         }
     }
 
     /// pop a gesture from the gesture queue into the output queue
     fn emit_gesture(&mut self) {
         if let Some(gesture) = self.gesture_queue.pop_front() {
-            self.output.push(Either::Right(gesture.clone()));
+            self.output.push(Either::Right(gesture));
         }
     }
 }
