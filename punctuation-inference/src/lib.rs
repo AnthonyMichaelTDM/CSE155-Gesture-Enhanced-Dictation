@@ -44,7 +44,8 @@
 //!
 //!
 
-mod events;
+pub mod events;
+pub mod redis;
 
 use std::collections::VecDeque;
 
@@ -305,6 +306,15 @@ impl PunctuationInferenceImpl {
         if let Some(gesture) = self.gesture_queue.pop_front() {
             self.output.push(Either::Right(gesture));
         }
+    }
+
+    /// Reset the state of the punctuation inference
+    /// This will clear the queues and the output
+    pub fn reset(&mut self) {
+        self.word_queue.clear();
+        self.gesture_queue.clear();
+        self.output.clear();
+        self.last_gesture_start = None;
     }
 }
 
