@@ -1,0 +1,9 @@
+services:
+  punctuation-inference:
+    build:
+      # dockerfile is located at punctuation-inference/Dockerfile
+      context: punctuation-inference
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"
