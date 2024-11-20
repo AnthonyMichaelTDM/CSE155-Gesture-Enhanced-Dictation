@@ -1,4 +1,5 @@
-torchaudio
 stable-ts
-RealtimeSTT
-redis
+redis[hiredis]
+pydantic
+pyaudio
+wave
