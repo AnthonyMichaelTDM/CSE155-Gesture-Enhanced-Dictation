@@ -34,6 +34,9 @@ pub enum ControlEvent {
     Reset,
     /// Exit the punctuation inference process (stop execution)
     Exit,
+    /// Other, unknown control event
+    #[serde(other)]
+    Other,
 }
 
 /// Word Events

@@ -1,12 +1,17 @@
 use std::sync::mpsc;
 
+use log::{debug, error, info, warn};
 use punctuation_inference::{
     events::{ControlEvent, Event},
     redis::Redis,
     PunctuationInference, PunctuationInferenceBuilder,
 };
+use redis::ErrorKind;
 
 fn main() -> anyhow::Result<()> {
+    // initialize logging
+    env_logger::init();
+
     let (tx, rx) = mpsc::channel();
 
     let (stop_tx, stop_rx) = mpsc::channel();
@@ -22,7 +27,7 @@ fn main() -> anyhow::Result<()> {
                         break;
                     }
                     Err(e) => {
-                        eprintln!("failed to connect to redis: {}", e);
+                        error!("failed to connect to redis: {}", e);
                         std::thread::sleep(std::time::Duration::from_secs(1));
                     }
                 }
@@ -31,7 +36,7 @@ fn main() -> anyhow::Result<()> {
             redis.expect("failed to connect to redis")
         };
 
-        println!("connected to redis");
+        info!("connected to redis");
 
         let _ = _redis.subscribe(&["word_events", "gesture_events", "control"], tx, stop_rx);
     });
@@ -40,34 +45,49 @@ fn main() -> anyhow::Result<()> {
     let mut started = false;
 
     while let Ok(msg) = rx.recv() {
-        let event = msg.get_payload::<Event>()?;
+        let event = match msg.get_payload::<Event>() {
+            Ok(event) => event,
+            Err(e) if e.kind() == ErrorKind::TypeError => {
+                warn!("received message with wrong type, skipping. Error: {e:?}. Message: {msg:?}");
+                continue;
+            }
+            Err(e) => {
+                error!("failed to get msg payload, exiting. Error: {e:?}. Message: {msg:?}");
+                break;
+            }
+        };
 
         match event {
             Event::Word(word_event) if started => {
-                println!("word event: {:?}", word_event);
+                info!("word event: {:?}", word_event);
                 punctuation_engine.register_word_event(word_event);
             }
             Event::Gesture(gesture_event) if started => {
-                println!("gesture event: {:?}", gesture_event);
+                info!("gesture event: {:?}", gesture_event);
                 punctuation_engine.register_gesture_event(gesture_event);
             }
             Event::Control(ControlEvent::Start) => {
-                println!("starting punctuation inference");
+                info!("starting punctuation inference");
                 started = true;
             }
             Event::Control(ControlEvent::Stop) => {
-                println!("stopping punctuation inference");
+                info!("stopping punctuation inference");
                 started = false;
             }
             Event::Control(ControlEvent::Reset) => {
-                println!("resetting punctuation inference");
+                info!("resetting punctuation inference");
                 punctuation_engine.reset();
             }
             Event::Control(ControlEvent::Exit) => {
-                println!("exiting punctuation inference");
+                info!("exiting punctuation inference");
                 break;
             }
-            _ => {}
+            Event::Word(_) | Event::Gesture(_) => {
+                warn!("received event before start event, skipping");
+            }
+            Event::Control(ControlEvent::Other) => {
+                debug!("received unknown control event, skipping");
+            }
         }
     }
 

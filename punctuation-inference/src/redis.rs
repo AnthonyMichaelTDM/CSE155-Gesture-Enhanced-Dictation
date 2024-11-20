@@ -1,6 +1,7 @@
 use std::sync::mpsc;
 
 use anyhow::Result;
+use log::info;
 use redis::RedisResult;
 use redis::{Client, Connection, Msg};
 
@@ -51,7 +52,7 @@ impl Redis {
             tx.send(msg)?;
 
             if stop_rx.try_recv().is_ok() {
-                println!("stopping subscription");
+                info!("stopping subscription");
                 break;
             }
         }
