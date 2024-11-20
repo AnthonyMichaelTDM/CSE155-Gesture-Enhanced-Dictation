@@ -143,10 +143,12 @@ class AudioRecorder:
         """
         Ensure the stream is closed when the object is deleted
         """
-        if not self.stream.is_stopped():
-            self.stream.stop_stream()
-        self.stream.close()
-        self.p.terminate()
+        if hasattr(self, "stream"):
+            if not self.stream.is_stopped():
+                self.stream.stop_stream()
+            self.stream.close()
+        if hasattr(self, "p"):
+            self.p.terminate()
 
     def record_frame(self):
         """
@@ -315,6 +317,27 @@ if __name__ == "__main__":
         redis_conn = Redis(
             retry_on_timeout=True, retry=Retry(backoff=ExponentialBackoff(), retries=10)
         )
+
+    try:
+        import sounddevice as sd
+
+        samplerates = 32000, 44100, 48000, 96000
+        devices = sd.query_devices()
+        print(f"Audio Devices:\n{devices}")
+        device = 0
+
+        supported_samplerates = []
+        for fs in samplerates:
+            try:
+                sd.check_output_settings(device=device, samplerate=fs)
+            except Exception as e:
+                print(fs, e)
+            else:
+                supported_samplerates.append(fs)
+        print(f"Supported Sample Rates: {supported_samplerates}")
+
+    except ImportError:
+        pass
 
     # initialize state machine
     audio_recorder = AudioRecorder()
