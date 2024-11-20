@@ -3,6 +3,23 @@ services:
     build:
       # dockerfile is located at punctuation-inference/Dockerfile
       context: punctuation-inference
+  speech-to-text:
+    build:
+      # dockerfile is located at speech-to-text/Dockerfile
+      context: speech-to-text
+    environment:
+      - ENVIRONMENT=production
+      - PULSE_SERVER=unix:/app/pulseaudio_socket
+      # temporary debug variables
+      - LOG_LEVEL=DEBUG
+      - SKIP_RECORDING=True
+    devices:
+      - "/dev/snd:/dev/snd"
+    group_add:
+      - "audio"
+    # attach the pulseaudio socket to the container
+    volumes:
+      - /run/user/1000/pulse/native:/app/pulseaudio_socket
   redis:
     image: "redis:alpine"
     ports:
