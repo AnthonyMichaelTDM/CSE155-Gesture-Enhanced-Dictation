@@ -3,6 +3,7 @@ from enum import Enum, StrEnum
 import logging
 from logging import debug, error, info, warning
 import string
+from time import sleep
 from typing import Any, Callable, Generator, Optional
 import wave
 import pyaudio
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from redis.client import PubSub
 import stable_whisper
 import torch
+import sounddevice as sd
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -49,27 +51,45 @@ class ControlEvent(StrEnum):
     A control event from the control channel
     """
 
-    start = "start"
-    stop_recording = "stop_recording"
-    exit = "exit"
+    start = '"Start"'
+    stop_recording = '"Stop Recording"'
+    exit = '"Exit"'
 
 
 class RedisEventListener:
     """Listens for events on redis channels and calls the appropriate callback when an event is received."""
 
+    @staticmethod
+    def exception_handler(e, ps, worker):
+        warning(f"Worker thread encountered an exception: {e}")
+        worker.stop()
+
     def __init__(self, redis_conn: Redis):
         self.redis_conn: Redis = redis_conn
-        self.pubsubs: dict[str, tuple[PubSub, Callable, Any]] = {}
+        self.pubsubs: dict[str, tuple[PubSub, Callable]] = {}
 
-    def subscribe[T](self, channels_and_callbacks: dict[str, Callable[[T], None]]):
+    def subscribe(self, channel: str, callback: Callable[[str], None]):
         pubsub: PubSub = self.redis_conn.pubsub()
-        pubsub.subscribe(**channels_and_callbacks)
+        pubsub.subscribe(**{channel: self._create_message_handler(callback)})
+        self.pubsubs.update({channel: (pubsub, callback)})
+        self.pubsub_thread = pubsub.run_in_thread(
+            sleep_time=0.001,
+            exception_handler=RedisEventListener.exception_handler,
+        )
+
+    def _create_message_handler(self, callback: Callable[[str], None]):
+        def message_handler(message):
+            if message["type"] == "message":
+                callback(message["data"].decode("utf-8"))
+
+        return message_handler
 
 
 class AudioTranscriber:
     def __init__(self):
         self.model = stable_whisper.load_faster_whisper(
-            model_size_or_path=MODEL, device="cuda" if HAS_GPU else "cpu"
+            model_size_or_path=MODEL,
+            device="cuda" if HAS_GPU else "cpu",
         )
         # self.word_event_generator: Optional[Generator[WordEvent, None, None]] = None
 
@@ -266,7 +286,7 @@ class StateMachine:
             match self.state:
                 case _State.IDLE:
                     # debug("Waiting for start event")
-                    pass
+                    sleep(0.05)
                 case _State.RECORDING:
                     # debug("Recording audio")
                     # record audio
@@ -291,13 +311,20 @@ class StateMachine:
                             info("Transcription complete")
                             self.state = _State.IDLE
                             self.word_event_generator = None
-
                             # if we're not running with redis, then exit after transcription is complete
                             if not PRODUCTION:
                                 self.control_event_handler(ControlEvent.exit)
                 case _State.EXIT:
                     info("Exiting application")
+                    if self.redis is not None:
+                        self.redis.close()
                     return
+
+
+def list_devices():
+    """print all available audio devices"""
+    devices = sd.query_devices()
+    print(f"Audio Devices:\n{devices}")
 
 
 if __name__ == "__main__":
@@ -311,33 +338,19 @@ if __name__ == "__main__":
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    list_devices()
+
     # connect to redis server
     redis_conn: Optional[Redis] = None
     if PRODUCTION:
         redis_conn = Redis(
-            retry_on_timeout=True, retry=Retry(backoff=ExponentialBackoff(), retries=10)
+            # host="redis",
+            host="127.0.0.1",
+            port=6379,
+            retry_on_timeout=True,
+            retry=Retry(backoff=ExponentialBackoff(), retries=10),
         )
-
-    try:
-        import sounddevice as sd
-
-        samplerates = 32000, 44100, 48000, 96000
-        devices = sd.query_devices()
-        print(f"Audio Devices:\n{devices}")
-        device = 0
-
-        supported_samplerates = []
-        for fs in samplerates:
-            try:
-                sd.check_output_settings(device=device, samplerate=fs)
-            except Exception as e:
-                print(fs, e)
-            else:
-                supported_samplerates.append(fs)
-        print(f"Supported Sample Rates: {supported_samplerates}")
-
-    except ImportError:
-        pass
+        info("Connected to redis")
 
     # initialize state machine
     audio_recorder = AudioRecorder()
@@ -346,12 +359,16 @@ if __name__ == "__main__":
         audio_recorder=audio_recorder, transcriber=transcriber, redis=redis_conn
     )
 
+    info("Application Started, waiting for events")
+
     # attach event listeners
     if PRODUCTION:
         assert redis_conn is not None
         listener = RedisEventListener(redis_conn)
 
-        listener.subscribe({CONTROL_CHANNEL: app.control_event_handler})
+        listener.subscribe(
+            CONTROL_CHANNEL, lambda x: app.control_event_handler(ControlEvent(x))
+        )
 
     try:
         app.run()
