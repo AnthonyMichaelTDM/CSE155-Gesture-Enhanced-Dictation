@@ -13,7 +13,7 @@ services:
       - ENVIRONMENT=production
       - PULSE_SERVER=unix:/app/pulseaudio_socket
       # temporary debug variables
-      - SKIP_RECORDING=True
+      # - SKIP_RECORDING=True
     devices:
       - "/dev/snd:/dev/snd"
     group_add:

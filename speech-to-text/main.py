@@ -1,21 +1,21 @@
-import os
-from enum import Enum, StrEnum
 import logging
-from logging import debug, error, info, warning
+import os
 import string
-from time import sleep
-from typing import Any, Callable, Generator, Optional
 import wave
+from enum import Enum, StrEnum
+from logging import debug, error, info, warning
+from time import sleep
+from typing import Callable, Generator, NoReturn, Optional
+
 import pyaudio
-from redis import Redis
-from redis.backoff import ExponentialBackoff
-from redis.retry import Retry
-from pydantic import BaseModel
-from redis.client import PubSub
+import sounddevice as sd
 import stable_whisper
 import torch
-import sounddevice as sd
-
+from pydantic import BaseModel
+from redis import Redis
+from redis.backoff import ExponentialBackoff
+from redis.client import PubSub
+from redis.retry import Retry
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
@@ -54,6 +54,14 @@ class ControlEvent(StrEnum):
     start = '"Start"'
     stop_recording = '"Stop Recording"'
     exit = '"Exit"'
+
+    @classmethod
+    def from_str(cls, event_str: str) -> Optional["ControlEvent"]:
+        try:
+            return cls(event_str)
+        except ValueError:
+            warning(f"Invalid ControlEvent: {event_str}")
+            return None
 
 
 class RedisEventListener:
@@ -128,8 +136,13 @@ class AudioTranscriber:
                     debug(f"Ignoring punctuation: {word.word}")
                     continue
 
+                word_text = word.word.strip()
+
+                if not word_text:
+                    continue
+
                 word_event = WordEvent(
-                    word=word.word,
+                    word=word_text,
                     start_time=word.start,
                     end_time=word.end,
                     confidence=word.probability,
@@ -281,7 +294,7 @@ class StateMachine:
                     self.recorder.p.terminate()
                 # TODO: halt transcription
 
-    def run(self):
+    def run(self) -> NoReturn:
         while True:
             match self.state:
                 case _State.IDLE:
@@ -292,6 +305,8 @@ class StateMachine:
                     # record audio
                     if not SKIP_RECORDING:
                         self.recorder.record_frame()
+                    else:
+                        sleep(0.05)
                 case _State.TRANSCIBING:
                     # debug("Transcribing audio")
 
@@ -318,7 +333,8 @@ class StateMachine:
                     info("Exiting application")
                     if self.redis is not None:
                         self.redis.close()
-                    return
+
+                    exit(0)
 
 
 def list_devices():
@@ -367,11 +383,19 @@ if __name__ == "__main__":
         listener = RedisEventListener(redis_conn)
 
         listener.subscribe(
-            CONTROL_CHANNEL, lambda x: app.control_event_handler(ControlEvent(x))
+            CONTROL_CHANNEL,
+            lambda x: (
+                app.control_event_handler(event)
+                if (event := ControlEvent.from_str(x)) is not None
+                else None
+            ),
         )
 
     try:
         app.run()
     except KeyboardInterrupt:
         info("Received keyboard interrupt")
-        app.state = _State.EXIT
+        exit(0)
+    except Exception as e:
+        error(f"An unhandled exception occurred: {e}")
+        exit(1)
