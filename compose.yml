@@ -3,6 +3,8 @@ services:
     build:
       # dockerfile is located at punctuation-inference/Dockerfile
       context: punctuation-inference
+    environment:
+      - RUST_LOG=info
   speech-to-text:
     build:
       # dockerfile is located at speech-to-text/Dockerfile
@@ -11,15 +13,17 @@ services:
       - ENVIRONMENT=production
       - PULSE_SERVER=unix:/app/pulseaudio_socket
       # temporary debug variables
-      - LOG_LEVEL=DEBUG
       - SKIP_RECORDING=True
     devices:
       - "/dev/snd:/dev/snd"
     group_add:
       - "audio"
-    # attach the pulseaudio socket to the container
     volumes:
+      # attach the pulseaudio socket to the container
       - /run/user/1000/pulse/native:/app/pulseaudio_socket
+      # also share where the whisper models are stored
+      - ~/.cache/whisper:/root/.cache/whisper
+      - ~/.cache/huggingface:/root/.cache/huggingface
   redis:
     image: "redis:alpine"
     ports:
