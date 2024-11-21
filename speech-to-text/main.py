@@ -344,8 +344,8 @@ if __name__ == "__main__":
     redis_conn: Optional[Redis] = None
     if PRODUCTION:
         redis_conn = Redis(
-            # host="redis",
-            host="127.0.0.1",
+            host="redis",
+            # host="127.0.0.1",
             port=6379,
             retry_on_timeout=True,
             retry=Retry(backoff=ExponentialBackoff(), retries=10),
