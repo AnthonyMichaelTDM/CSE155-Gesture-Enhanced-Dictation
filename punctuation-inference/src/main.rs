@@ -71,8 +71,14 @@ fn main() -> anyhow::Result<()> {
                 started = true;
             }
             Event::Control(ControlEvent::Stop) => {
-                info!("stopping punctuation inference");
+                info!("stopping punctuation inference and uploading results");
                 started = false;
+
+                // now we can run the engine and upload the results to redis
+                let text = punctuation_engine.get_text();
+                let mut redis = Redis::new("redis://redis:6379")?;
+                redis.publish("punctuation_text", text.clone())?;
+                info!("uploaded text: {text}");
             }
             Event::Control(ControlEvent::Reset) => {
                 info!("resetting punctuation inference");
@@ -94,12 +100,6 @@ fn main() -> anyhow::Result<()> {
     // at this point, we're done reading from redis, so we can send the kill signal
     stop_tx.send(()).expect("failed to send stop message");
     handle.join().expect("failed to join thread");
-
-    // now we can run the engine and upload the results to redis
-    punctuation_engine.process_queues();
-    let text = punctuation_engine.get_text();
-    let mut redis = Redis::new("redis://redis:6379")?;
-    redis.publish("punctuation_text", text)?;
 
     Ok(())
 }
