@@ -9,6 +9,7 @@ import itertools
 from logging import info, warning
 import logging
 import os
+from tkinter import font
 from typing import Literal, Optional, override
 
 import cv2
@@ -123,6 +124,140 @@ class HandDetector(mp_hands.Hands):
         )
 
 
+class UI:
+    def __init__(self, image_width=960, image_height=540):
+        pygame.init()
+        pygame.mixer.init()
+        self.window = pygame.display.set_mode((1024, 768))
+        self.muted = False
+        self.chime_file = "Chime.mp3"
+        self.running = True
+        self.paused = True
+        self.mute_button = pygame.Rect(
+            50 + image_width - 100, image_height + 50, 100, 50
+        )
+        self.start_stop_button = pygame.Rect(50, image_height + 50, 100, 50)
+        self.text_box = pygame.Rect(50, image_height + 100, image_width, 200)
+        self.text = "Waiting to start recording..."
+        self.image_width = image_width
+        self.image_height = image_height
+
+        self.font = pygame.font.Font(None, 36)
+        self.font_height = self.font.get_height()
+
+    def handle_start_stop_button(self):
+        """Called when the start/stop button is clicked
+
+        Toggles the paused state and updates button text,
+        also will send a control signal to redis to tell the other
+        components to start/stop processing
+
+        TODO: implement redis stuff
+        TODO: need a better way for the punctuation component to wait for the speech-to-text component to finish, it can't just run the inference as soon as it gets the stop signal
+
+        """
+
+        self.paused = not self.paused
+
+        self.text = (
+            "Recording..." if not self.paused else "Waiting to start recording..."
+        )
+
+        pass
+
+    def toggle_mute(self):
+        self.muted = not self.muted
+        if self.muted:
+            info("Muted")
+        else:
+            info("Unmuted")
+
+    def play_chime(self):
+        def play_chime_thread(chime_file, muted):
+            if not muted:
+                pygame.mixer.music.load(chime_file)
+                pygame.mixer.music.play()
+
+        threading.Thread(
+            target=play_chime_thread, args=(self.chime_file, self.muted)
+        ).start()
+
+    def process_events(self) -> int | None:
+        """Process pygame events
+
+        Returns:
+            int | None: the keypoint class number if a number key was pressed and the mode is KEYPOINT_TRAINING, else None
+        """
+        for event in pygame.event.get():
+            match event.type:
+                case pygame.QUIT:
+                    self.running = False
+                    return
+                case pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        self.running = False
+                        return
+                    if event.key == pygame.K_m:
+                        self.toggle_mute()
+                    if event.key == pygame.K_SPACE:
+                        self.handle_start_stop_button()
+                    if MODE.is_keypoint():
+                        return MODE.pick_class_number(event.key)
+                case pygame.MOUSEBUTTONDOWN:
+                    if self.mute_button.collidepoint(event.pos):
+                        self.toggle_mute()
+                    if self.start_stop_button.collidepoint(event.pos):
+                        self.handle_start_stop_button()
+
+    def draw(self, image: MatLike):
+        image = cv2.transpose(image)
+        image = pygame.surfarray.make_surface(image)
+
+        self.window.fill((255, 255, 255))
+        self.window.blit(image, (50, 50))
+
+        # Draw buttons with rounded edges and thin black border
+        pygame.draw.rect(
+            self.window, (255, 255, 255), self.mute_button, border_radius=10
+        )
+        pygame.draw.rect(self.window, (0, 0, 0), self.mute_button, 2, border_radius=10)
+        pygame.draw.rect(
+            self.window, (255, 255, 255), self.start_stop_button, border_radius=10
+        )
+        pygame.draw.rect(
+            self.window, (0, 0, 0), self.start_stop_button, 2, border_radius=10
+        )
+
+        mute_text = self.font.render(
+            "Unmute" if self.muted else "Mute", True, (0, 0, 0)
+        )
+        start_stop_text = self.font.render(
+            "Start" if self.paused else "Stop", True, (0, 0, 0)
+        )
+        text = self.font.render(self.text, True, (0, 0, 0))
+
+        mute_text_width = mute_text.get_width()
+        start_stop_text_width = start_stop_text.get_width()
+
+        self.window.blit(
+            mute_text,
+            (
+                50 + self.image_width - 100 + (100 - mute_text_width) // 2,
+                self.image_height + 50 + self.font_height // 2,
+            ),
+        )
+        self.window.blit(
+            start_stop_text,
+            (
+                50 + (100 - start_stop_text_width) // 2,
+                self.image_height + 50 + self.font_height // 2,
+            ),
+        )
+        self.window.blit(text, (50, self.image_height + 100 + 10))
+
+        pygame.display.flip()
+
+
 def get_args():
     parser = argparse.ArgumentParser()
 
@@ -147,12 +282,6 @@ def get_args():
     args = parser.parse_args()
 
     return args
-
-
-def play_chime(sound_file, muted):
-    if not muted:
-        pygame.mixer.music.load(sound_file)
-        pygame.mixer.music.play()
 
 
 def capture_image(cap: cv2.VideoCapture) -> MatLike:
@@ -219,7 +348,7 @@ def main():
 
     use_brect = True
 
-    # Camera preparation ###############################################################
+    # Camera preparation #####################################################
     cap = cv2.VideoCapture(cap_device)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, cap_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_height)
@@ -259,35 +388,23 @@ def main():
     dwell_time = 3  # 3 seconds
     keypoint_training_class: int | None = None
 
-    # define sound variables for successful queues and muted icon ##############
-    pygame.mixer.init()
-    muted = False
-    chime_file = "Chime.mp3"
+    # Set up UI ###############################################################
+    ui = UI()
 
     try:
-        while True:
+        while ui.running:
             fps = cvFpsCalc.get()
 
-            # Process Keys (ESC: end) #################################################
-            match cv2.waitKey(10):
-                case 27:  # ESC
-                    break
-                case 109:  # m keybind (109 is m in ascii)
-                    muted = not muted
-                    if muted:
-                        info("Muted")
-                    else:
-                        info("Unmuted")
-                case key:  # other, send to MODE
-                    keypoint_training_class = MODE.pick_class_number(key)
+            # Process Events  ####################################################
+            ui.process_events()
 
             # Camera capture #####################################################
             image = capture_image(cap)
             # the image that we process to detect the hand gestures
             image = cv2.flip(image, 1)  # Mirror display
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             # the image that we use to draw on to display stuff to the user
             display = copy.deepcopy(image)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
             # Detection implementation #############################################################
             if (result := hand_detector.process(image)) is not None:
@@ -329,9 +446,7 @@ def main():
                     redis_connection.rpush("gesture_queue", val_to_push)
                     # makes the rectangle green when the val is queued successfully
                     display = draw_bounding_rect(use_brect, display, brect, "success")
-                    threading.Thread(
-                        target=play_chime, args=(chime_file, muted)
-                    ).start()
+                    ui.play_chime()
                     print(f"Pushed {val_to_push} to queue.")
 
                     queued_val = redis_connection.lpop("gesture_queue")
@@ -360,14 +475,16 @@ def main():
             )
 
             # Display the mute icon if the sound is muted #####################################
-            display = display_mute_icon(display, muted)
+            display = display_mute_icon(display, ui.muted)
 
             # Screen reflection #############################################################
-            cv2.imshow("Hand Gesture Recognition", mat=display)
+            # cv2.imshow("Hand Gesture Recognition", mat=display)
+            ui.draw(display)
     except ImageCaptureError as e:
         warning(f"ImageCaptureError: {e}")
     finally:
         cap.release()
+        pygame.quit()
         cv2.destroyAllWindows()
 
 
