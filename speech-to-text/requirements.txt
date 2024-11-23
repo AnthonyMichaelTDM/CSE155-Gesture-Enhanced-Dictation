@@ -1,0 +1,6 @@
+stable-ts[fw]
+redis[hiredis]
+pydantic
+pyaudio
+wave
+sounddevice
