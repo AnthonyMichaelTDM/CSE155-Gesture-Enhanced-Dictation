@@ -47,17 +47,16 @@ class Mode(StrEnum):
     def is_keypoint(self):
         return self == Mode.KEYPOINT
 
-    def pick_class_number(self, delay=10):
-        """If in keypoint training mode, waits up to `delay` for a keypress and returns the number pressed.
+    def pick_class_number(self, key: int):
+        """If in keypoint training mode, returns the number pressed.
         Used to select what label to assign to keypoint data when in KEYPOINT_TRAINING mode.
 
         Returns:
-            Optional[int]: The number pressed, or None if the delay expired or the mode is not KEYPOINT_TRAINING.
+            Optional[int]: The number pressed, or None if the mode is not KEYPOINT_TRAINING.
         """
         if not self.is_keypoint():
             return None
 
-        key = cv2.waitKey(10)
         if 48 <= key <= 57:
             return key - 48
         return None
@@ -270,17 +269,17 @@ def main():
             fps = cvFpsCalc.get()
 
             # Process Keys (ESC: end) #################################################
-            key = cv2.waitKey(10)
-            if key == 27:  # ESC
-                break
-            elif key == 109:  # m keybind (109 is m in ascii)
-                muted = not muted
-                if muted:
-                    info("Muted")
-                else:
-                    info("Unmuted")
-
-            keypoint_training_class = MODE.pick_class_number()
+            match cv2.waitKey(10):
+                case 27:  # ESC
+                    break
+                case 109:  # m keybind (109 is m in ascii)
+                    muted = not muted
+                    if muted:
+                        info("Muted")
+                    else:
+                        info("Unmuted")
+                case key:  # other, send to MODE
+                    keypoint_training_class = MODE.pick_class_number(key)
 
             # Camera capture #####################################################
             image = capture_image(cap)
@@ -312,33 +311,36 @@ def main():
 
                 # Check if the detected gesture matches the desired punctuation ###################################
                 # print(f"{keypoint_classifier_labels[hand_sign_id]}: {hand_sign_id}")
-                if keypoint_classifier_labels[hand_sign_id] != "Neutral":
+                if (
+                    keypoint_classifier_labels[hand_sign_id] != "Neutral"
+                    and not gesture_detected
+                ):
+                    # Start timing the gesture
+                    gesture_detected = True
+                    gesture_start_time = time.time()
+                    # makes the rectangle orange as the dwell time is processing
+                    display = draw_bounding_rect(use_brect, display, brect, "dwell")
+                elif (
+                    keypoint_classifier_labels[hand_sign_id] != "Neutral"
+                    and time.time() - gesture_start_time >= dwell_time
+                ):
                     val_to_push = PUNCTUATION_MARKS[hand_sign_id]
-                    if not gesture_detected:
-                        # Start timing the gesture
-                        gesture_detected = True
-                        gesture_start_time = time.time()
-                        # makes the rectangle orange as the dwell time is processing
-                        display = draw_bounding_rect(use_brect, display, brect, "dwell")
-                    elif time.time() - gesture_start_time >= dwell_time:
-                        # Dwell time met, push to queue only once
-                        redis_connection.rpush("gesture_queue", val_to_push)
-                        # makes the rectangle green when the val is queued successfully
-                        display = draw_bounding_rect(
-                            use_brect, display, brect, "success"
-                        )
-                        threading.Thread(
-                            target=play_chime, args=(chime_file, muted)
-                        ).start()
-                        print(f"Pushed {val_to_push} to queue.")
+                    # Dwell time met, push to queue only once
+                    redis_connection.rpush("gesture_queue", val_to_push)
+                    # makes the rectangle green when the val is queued successfully
+                    display = draw_bounding_rect(use_brect, display, brect, "success")
+                    threading.Thread(
+                        target=play_chime, args=(chime_file, muted)
+                    ).start()
+                    print(f"Pushed {val_to_push} to queue.")
 
-                        queued_val = redis_connection.lpop("gesture_queue")
-                        if queued_val:
-                            print(f"Dequeued {queued_val.decode()} from the queue.")
-                            print()
-                            # reset the reactangle  color back to normal
-                            display = draw_bounding_rect(use_brect, display, brect)
-                        gesture_detected = False  # Reset to prevent continuous queuing
+                    queued_val = redis_connection.lpop("gesture_queue")
+                    if queued_val:
+                        print(f"Dequeued {queued_val.decode()} from the queue.")
+                        print()
+                        # reset the reactangle  color back to normal
+                        display = draw_bounding_rect(use_brect, display, brect)
+                    gesture_detected = False  # Reset to prevent continuous queuing
                 else:
                     # Reset if gesture is not detected in the frame
                     gesture_detected = False
