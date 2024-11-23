@@ -9,10 +9,10 @@ import itertools
 from logging import info, warning
 import logging
 import os
-from typing import Optional, override
+from typing import Literal, Optional, override
 
 import cv2
-from cv2.typing import MatLike, Point
+from cv2.typing import MatLike, Point, Rect
 import numpy as np
 from mediapipe.python.solutions import hands as mp_hands
 
@@ -79,14 +79,25 @@ class ImageCaptureError(Exception):
     pass
 
 
+@dataclass(frozen=True, eq=True, slots=True)
+class Landmark:
+    x: float
+    y: float
+    z: float
+
+
 @dataclass
 class HandResult:
-    multi_hand_landmarks: list[Point]
-    multi_handedness: list[str]
-    multi_hand_world_landmarks: list
+    hand_landmarks: list[Landmark]
+    handedness: Literal["Left"] | Literal["Right"]
+    # hand_world_landmarks: list
 
 
 class HandDetector(mp_hands.Hands):
+    def __init__(self, **kwargs):
+        kwargs["max_num_hands"] = 1
+        super().__init__(**kwargs)
+
     @override
     def process(self, image: MatLike) -> Optional[HandResult]:
         image.flags.writeable = False
@@ -104,10 +115,12 @@ class HandDetector(mp_hands.Hands):
         ):
             return None
 
+        assert len(multi_handedness) == 1
+
         return HandResult(
-            multi_hand_landmarks=multi_hand_landmarks,
-            multi_handedness=multi_handedness,
-            multi_hand_world_landmarks=multi_hand_world_landmarks,
+            hand_landmarks=multi_hand_landmarks[0].landmark,
+            handedness=multi_handedness[0].classification[0].label,
+            # hand_world_landmarks=multi_hand_world_landmarks[0].landmark,
         )
 
 
@@ -215,7 +228,6 @@ def main():
     # Model load #############################################################
     hand_detector = HandDetector(
         static_image_mode=use_static_image_mode,
-        max_num_hands=1,
         min_detection_confidence=min_detection_confidence,
         min_tracking_confidence=min_tracking_confidence,
     )
@@ -280,72 +292,66 @@ def main():
 
             # Detection implementation #############################################################
             if (result := hand_detector.process(image)) is not None:
-                for hand_landmarks, handedness in zip(
-                    result.multi_hand_landmarks, result.multi_handedness
-                ):
-                    # Bounding box calculation
-                    brect = calc_bounding_rect(display, hand_landmarks)
-                    # Landmark calculation
-                    landmark_list = calc_landmark_list(display, hand_landmarks)
+                hand_landmarks = result.hand_landmarks
+                handedness = result.handedness
 
-                    # Conversion to relative coordinates / normalized coordinates
-                    pre_processed_landmark_list = pre_process_landmark(landmark_list)
+                # Bounding box calculation
+                brect = calc_bounding_rect(display, hand_landmarks)
+                # Landmark calculation
+                landmark_list = calc_landmark_list(display, hand_landmarks)
 
-                    # Write to the dataset file
-                    if MODE.is_keypoint() and keypoint_training_class is not None:
-                        MODE.log_data(
-                            keypoint_training_class, pre_processed_landmark_list
+                # Conversion to relative coordinates / normalized coordinates
+                pre_processed_landmark_list = pre_process_landmark(landmark_list)
+
+                # Write to the dataset file
+                if MODE.is_keypoint() and keypoint_training_class is not None:
+                    MODE.log_data(keypoint_training_class, pre_processed_landmark_list)
+
+                # Hand sign classification
+                hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+
+                # Check if the detected gesture matches the desired punctuation ###################################
+                # print(f"{keypoint_classifier_labels[hand_sign_id]}: {hand_sign_id}")
+                if keypoint_classifier_labels[hand_sign_id] != "Neutral":
+                    val_to_push = PUNCTUATION_MARKS[hand_sign_id]
+                    if not gesture_detected:
+                        # Start timing the gesture
+                        gesture_detected = True
+                        gesture_start_time = time.time()
+                        # makes the rectangle orange as the dwell time is processing
+                        display = draw_bounding_rect(use_brect, display, brect, "dwell")
+                    elif time.time() - gesture_start_time >= dwell_time:
+                        # Dwell time met, push to queue only once
+                        redis_connection.rpush("gesture_queue", val_to_push)
+                        # makes the rectangle green when the val is queued successfully
+                        display = draw_bounding_rect(
+                            use_brect, display, brect, "success"
                         )
+                        threading.Thread(
+                            target=play_chime, args=(chime_file, muted)
+                        ).start()
+                        print(f"Pushed {val_to_push} to queue.")
 
-                    # Hand sign classification
-                    hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+                        queued_val = redis_connection.lpop("gesture_queue")
+                        if queued_val:
+                            print(f"Dequeued {queued_val.decode()} from the queue.")
+                            print()
+                            # reset the reactangle  color back to normal
+                            display = draw_bounding_rect(use_brect, display, brect)
+                        gesture_detected = False  # Reset to prevent continuous queuing
+                else:
+                    # Reset if gesture is not detected in the frame
+                    gesture_detected = False
 
-                    # Check if the detected gesture matches the desired punctuation ###################################
-                    # print(f"{keypoint_classifier_labels[hand_sign_id]}: {hand_sign_id}")
-                    if keypoint_classifier_labels[hand_sign_id] != "Neutral":
-                        val_to_push = PUNCTUATION_MARKS[hand_sign_id]
-                        if not gesture_detected:
-                            # Start timing the gesture
-                            gesture_detected = True
-                            gesture_start_time = time.time()
-                            # makes the rectangle orange as the dwell time is processing
-                            display = draw_bounding_rect(
-                                use_brect, display, brect, "dwell"
-                            )
-                        elif time.time() - gesture_start_time >= dwell_time:
-                            # Dwell time met, push to queue only once
-                            redis_connection.rpush("gesture_queue", val_to_push)
-                            # makes the rectangle green when the val is queued successfully
-                            display = draw_bounding_rect(
-                                use_brect, display, brect, "success"
-                            )
-                            threading.Thread(
-                                target=play_chime, args=(chime_file, muted)
-                            ).start()
-                            print(f"Pushed {val_to_push} to queue.")
-
-                            queued_val = redis_connection.lpop("gesture_queue")
-                            if queued_val:
-                                print(f"Dequeued {queued_val.decode()} from the queue.")
-                                print()
-                                # reset the reactangle  color back to normal
-                                display = draw_bounding_rect(use_brect, display, brect)
-                            gesture_detected = (
-                                False  # Reset to prevent continuous queuing
-                            )
-                    else:
-                        # Reset if gesture is not detected in the frame
-                        gesture_detected = False
-
-                    # Drawing part
-                    display = draw_bounding_rect(use_brect, display, brect)
-                    display = draw_landmarks(display, landmark_list)
-                    display = draw_info_text(
-                        display,
-                        brect,
-                        handedness,
-                        keypoint_classifier_labels[hand_sign_id],
-                    )
+                # Drawing part
+                display = draw_bounding_rect(use_brect, display, brect)
+                display = draw_landmarks(display, landmark_list)
+                display = draw_info_text(
+                    display,
+                    brect,
+                    handedness,
+                    keypoint_classifier_labels[hand_sign_id],
+                )
 
             display = draw_info(
                 display, fps, MODE.is_keypoint(), keypoint_training_class
@@ -363,12 +369,12 @@ def main():
         cv2.destroyAllWindows()
 
 
-def calc_bounding_rect(image, landmarks):
+def calc_bounding_rect(image: MatLike, landmarks: list[Landmark]) -> Rect:
     image_width, image_height = image.shape[1], image.shape[0]
 
     landmark_array = np.empty((0, 2), int)
 
-    for _, landmark in enumerate(landmarks.landmark):
+    for landmark in landmarks:
         landmark_x = min(int(landmark.x * image_width), image_width - 1)
         landmark_y = min(int(landmark.y * image_height), image_height - 1)
 
@@ -376,18 +382,16 @@ def calc_bounding_rect(image, landmarks):
 
         landmark_array = np.append(landmark_array, landmark_point, axis=0)
 
-    x, y, w, h = cv2.boundingRect(landmark_array)
-
-    return [x, y, x + w, y + h]
+    return cv2.boundingRect(landmark_array)
 
 
-def calc_landmark_list(image, landmarks):
+def calc_landmark_list(image, landmarks: list[Landmark]) -> list[Point]:
     image_width, image_height = image.shape[1], image.shape[0]
 
     landmark_point = []
 
     # Keypoint
-    for _, landmark in enumerate(landmarks.landmark):
+    for landmark in landmarks:
         landmark_x = min(int(landmark.x * image_width), image_width - 1)
         landmark_y = min(int(landmark.y * image_height), image_height - 1)
         # landmark_z = landmark.z

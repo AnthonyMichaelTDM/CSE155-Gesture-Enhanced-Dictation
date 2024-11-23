@@ -1,6 +1,6 @@
 from typing import Optional
 import cv2
-from cv2.typing import MatLike, Point
+from cv2.typing import MatLike, Point, Rect
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -214,36 +214,41 @@ def draw_landmarks(
 
 
 def draw_bounding_rect(
-    use_brect: bool, image: MatLike, brect, val="default"
+    use_brect: bool, image: MatLike, brect: cv2.typing.Rect, val="default"
 ) -> MatLike:
     if use_brect:
+        x, y, w, h = brect
+        pt1 = (x, y)
+        pt2 = (x + w, y + h)
+
         if val == "dwell":
             # Outer rectangle (orange)
-            cv2.rectangle(
-                image, (brect[0], brect[1]), (brect[2], brect[3]), (0, 165, 255), 1
-            )
+            cv2.rectangle(image, pt1, pt2, (0, 165, 255), 1)
         elif val == "success":
             # Outer rectangle (green)
-            cv2.rectangle(
-                image, (brect[0], brect[1]), (brect[2], brect[3]), (0, 255, 0), 1
-            )
+            cv2.rectangle(image, pt1, pt2, (0, 255, 0), 1)
         else:
             # Outer rectangle (black)
-            cv2.rectangle(image, (brect[0], brect[1]), (brect[2], brect[3]), BLACK, 1)
+            cv2.rectangle(image, pt1, pt2, BLACK, 1)
 
     return image
 
 
-def draw_info_text(image: MatLike, brect, handedness, hand_sign_text) -> MatLike:
-    cv2.rectangle(image, (brect[0], brect[1]), (brect[2], brect[1] - 22), BLACK, -1)
+def draw_info_text(
+    image: MatLike, brect: cv2.typing.Rect, handedness: str, hand_sign_text: str
+) -> MatLike:
+    x, y, w, _ = brect
+    pt1 = (x, y)
 
-    info_text = handedness.classification[0].label[0:]
+    cv2.rectangle(image, pt1, (x + w, y - 22), BLACK, -1)
+
+    info_text = handedness
     if hand_sign_text != "":
         info_text = info_text + ":" + hand_sign_text
     cv2.putText(
         image,
         info_text,
-        (brect[0] + 5, brect[1] - 4),
+        (x + 5, y - 4),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
         WHITE,
