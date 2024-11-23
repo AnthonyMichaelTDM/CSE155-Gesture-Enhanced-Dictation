@@ -121,7 +121,7 @@ def main():
         # host="127.0.0.1",
         port=6379,
         retry_on_timeout=True,
-        retry=Retry(backoff=ExponentialBackoff(), retries=10),
+        retry=Retry(backoff=ExponentialBackoff(), retries=3),
     )
     if redis_connection.ping():
         print("Connected to Redis successfully!")
