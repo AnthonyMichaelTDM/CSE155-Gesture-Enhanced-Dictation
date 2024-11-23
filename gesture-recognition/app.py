@@ -210,6 +210,13 @@ class UI:
                         self.handle_start_stop_button()
 
     def draw(self, image: MatLike):
+        # TODO: the text box should:
+        # - word wrap
+        # - be able to scroll up and down
+        # - have a thin border
+        # - have an icon in the top right corner to copy the text to the clipboard
+        # - text should be selectable
+
         image = cv2.transpose(image)
         image = pygame.surfarray.make_surface(image)
 
