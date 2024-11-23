@@ -1,7 +1,0 @@
-opencv-python
-mediapipe
-tensorflow
-redis
-pygame
-scikit-learn
-jupyter
