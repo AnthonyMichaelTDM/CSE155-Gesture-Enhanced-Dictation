@@ -233,9 +233,7 @@ def draw_bounding_rect(
     return image
 
 
-def draw_info_text(
-    image: MatLike, brect, handedness, hand_sign_text, finger_gesture_text
-) -> MatLike:
+def draw_info_text(image: MatLike, brect, handedness, hand_sign_text) -> MatLike:
     cv2.rectangle(image, (brect[0], brect[1]), (brect[2], brect[1] - 22), BLACK, -1)
 
     info_text = handedness.classification[0].label[0:]
@@ -251,38 +249,6 @@ def draw_info_text(
         1,
         cv2.LINE_AA,
     )
-
-    if finger_gesture_text != "":
-        cv2.putText(
-            image,
-            "Finger Gesture:" + finger_gesture_text,
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            BLACK,
-            4,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            image,
-            "Finger Gesture:" + finger_gesture_text,
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            WHITE,
-            2,
-            cv2.LINE_AA,
-        )
-
-    return image
-
-
-def draw_point_history(image: MatLike, point_history) -> MatLike:
-    for index, point in enumerate(point_history):
-        if point[0] != 0 and point[1] != 0:
-            cv2.circle(
-                image, (point[0], point[1]), 1 + int(index / 2), (152, 251, 152), 2
-            )
 
     return image
 
