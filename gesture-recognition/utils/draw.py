@@ -1,3 +1,4 @@
+from typing import Optional
 import cv2
 from cv2.typing import MatLike, Point
 
@@ -253,7 +254,9 @@ def draw_info_text(image: MatLike, brect, handedness, hand_sign_text) -> MatLike
     return image
 
 
-def draw_info(image: MatLike, fps: float, mode: int, number: int) -> MatLike:
+def draw_info(
+    image: MatLike, fps: float, keypoint_training_mode: bool, number: Optional[int]
+) -> MatLike:
     cv2.putText(
         image,
         "FPS:" + str(fps),
@@ -275,27 +278,30 @@ def draw_info(image: MatLike, fps: float, mode: int, number: int) -> MatLike:
         cv2.LINE_AA,
     )
 
-    mode_string = ["Logging Key Point", "Logging Point History"]
-    if 1 <= mode <= 2:
+    if not keypoint_training_mode:
+        return image
+
+    cv2.putText(
+        image,
+        "MODE: Keypoint Training",
+        (10, 90),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        WHITE,
+        1,
+        cv2.LINE_AA,
+    )
+
+    if number is not None:
         cv2.putText(
             image,
-            "MODE:" + mode_string[mode - 1],
-            (10, 90),
+            f"Currently training for class {number}",
+            (10, 110),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             WHITE,
             1,
             cv2.LINE_AA,
         )
-        if 0 <= number <= 9:
-            cv2.putText(
-                image,
-                "NUM:" + str(number),
-                (10, 110),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                WHITE,
-                1,
-                cv2.LINE_AA,
-            )
+
     return image

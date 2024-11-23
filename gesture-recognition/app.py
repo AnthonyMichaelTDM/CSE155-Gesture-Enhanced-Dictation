@@ -3,11 +3,16 @@
 import csv
 import copy
 import argparse
+from dataclasses import dataclass
+from enum import StrEnum
 import itertools
-from collections import Counter
-from collections import deque
+from logging import info, warning
+import logging
+import os
+from typing import Optional, override
 
 import cv2
+from cv2.typing import MatLike, Point
 import numpy as np
 from mediapipe.python.solutions import hands as mp_hands
 
@@ -19,7 +24,6 @@ from utils.draw import (
     draw_bounding_rect,
 )
 from model import KeyPointClassifier
-from model import PointHistoryClassifier
 
 from redis import Redis
 from redis.retry import Retry
@@ -27,6 +31,84 @@ from redis.backoff import ExponentialBackoff
 import time
 import pygame
 import threading
+
+PUNCTUATION_MARKS = [".", ",", "?", "!", '"']
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+
+class Mode(StrEnum):
+    NORMAL = "NORMAL"
+    KEYPOINT = "KEYPOINT_TRAINING"
+
+    def is_normal(self):
+        return self == Mode.NORMAL
+
+    def is_keypoint(self):
+        return self == Mode.KEYPOINT
+
+    def pick_class_number(self, delay=10):
+        """If in keypoint training mode, waits up to `delay` for a keypress and returns the number pressed.
+        Used to select what label to assign to keypoint data when in KEYPOINT_TRAINING mode.
+
+        Returns:
+            Optional[int]: The number pressed, or None if the delay expired or the mode is not KEYPOINT_TRAINING.
+        """
+        if not self.is_keypoint():
+            return None
+
+        key = cv2.waitKey(10)
+        if 48 <= key <= 57:
+            return key - 48
+        return None
+
+    def log_data(self, number, landmark_list):
+        if not self.is_keypoint() or number is None:
+            return
+
+        csv_path = "model/keypoint_classifier/keypoint.csv"
+        with open(csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([number, *landmark_list])
+
+
+MODE = Mode(os.getenv("MODE", "NORMAL"))
+
+
+class ImageCaptureError(Exception):
+    pass
+
+
+@dataclass
+class HandResult:
+    multi_hand_landmarks: list[Point]
+    multi_handedness: list[str]
+    multi_hand_world_landmarks: list
+
+
+class HandDetector(mp_hands.Hands):
+    @override
+    def process(self, image: MatLike) -> Optional[HandResult]:
+        image.flags.writeable = False
+        results = super().process(image)
+        image.flags.writeable = True
+
+        multi_hand_landmarks = results.multi_hand_landmarks  # type:ignore
+        multi_handedness = results.multi_handedness  # type:ignore
+        multi_hand_world_landmarks = results.multi_hand_world_landmarks  # type:ignore
+
+        if not (
+            multi_hand_landmarks is not None
+            and multi_handedness is not None
+            and multi_hand_world_landmarks is not None
+        ):
+            return None
+
+        return HandResult(
+            multi_hand_landmarks=multi_hand_landmarks,
+            multi_handedness=multi_handedness,
+            multi_hand_world_landmarks=multi_hand_world_landmarks,
+        )
 
 
 def get_args():
@@ -46,7 +128,7 @@ def get_args():
     parser.add_argument(
         "--min_tracking_confidence",
         help="min_tracking_confidence",
-        type=int,
+        type=float,
         default=0.5,
     )
 
@@ -61,7 +143,57 @@ def play_chime(sound_file, muted):
         pygame.mixer.music.play()
 
 
+def capture_image(cap: cv2.VideoCapture) -> MatLike:
+    ret, image = cap.read()
+    if not ret:
+        raise ImageCaptureError("Failed to capture image")
+    return image
+
+
+def display_mute_icon(display: MatLike, muted: bool) -> MatLike:
+    if not muted:
+        return display
+
+    try:
+        mute_icon = cv2.imread("volume-mute.png", cv2.IMREAD_UNCHANGED)
+    except cv2.error as e:
+        warning(f"Failed to load mute icon: {e}")
+        return display
+
+    n = 70  # pixels
+    mute_icon_resized = cv2.resize(
+        mute_icon, (n, n)
+    )  # Resize the mute icon to nxn pixels
+
+    h, w, _ = display.shape  # Get the dimensions of the current frame
+    x_offset, y_offset = w - (n + 10), h - (n + 10)  # Bottom-right corner
+    y1, y2 = y_offset, y_offset + mute_icon_resized.shape[0]
+    x1, x2 = x_offset, x_offset + mute_icon_resized.shape[1]
+
+    # Split color and alpha channels
+    icon_rgb = mute_icon_resized[:, :, :3]
+    icon_alpha = mute_icon_resized[:, :, 3] / 255.0  # Normalize alpha channel to 0-1
+
+    # Blend each color channel based on alpha
+    for c in range(3):  # Apply to B, G, R channels
+        display[y1:y2, x1:x2, c] = (
+            icon_alpha * icon_rgb[:, :, c] + (1 - icon_alpha) * display[y1:y2, x1:x2, c]
+        )
+
+    return display
+
+
 def main():
+    # Set up logging
+    logging.basicConfig(
+        level=(
+            logging._nameToLevel[LOG_LEVEL]
+            if LOG_LEVEL in logging._nameToLevel
+            else logging.INFO
+        ),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
     # Argument parsing #################################################################
     args = get_args()
 
@@ -81,7 +213,7 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_height)
 
     # Model load #############################################################
-    hands = mp_hands.Hands(
+    hand_detector = HandDetector(
         static_image_mode=use_static_image_mode,
         max_num_hands=1,
         min_detection_confidence=min_detection_confidence,
@@ -90,35 +222,15 @@ def main():
 
     keypoint_classifier = KeyPointClassifier()
 
-    point_history_classifier = PointHistoryClassifier()
-
     # Read labels ###########################################################
     with open(
         "model/keypoint_classifier/keypoint_classifier_label.csv", encoding="utf-8-sig"
     ) as f:
         keypoint_classifier_labels = csv.reader(f)
         keypoint_classifier_labels = [row[0] for row in keypoint_classifier_labels]
-    # with open(
-    #     "model/point_history_classifier/point_history_classifier_label.csv",
-    #     encoding="utf-8-sig",
-    # ) as f:
-    #     point_history_classifier_labels = csv.reader(f)
-    #     point_history_classifier_labels = [
-    #         row[0] for row in point_history_classifier_labels
-    #     ]
 
     # FPS Measurement ########################################################
     cvFpsCalc = CvFpsCalc(buffer_len=10)
-
-    # Coordinate history #################################################################
-    # history_length = 16
-    # point_history = deque(maxlen=history_length)
-
-    # Finger gesture history ################################################
-    # finger_gesture_history = deque(maxlen=history_length)
-
-    #  ########################################################################
-    mode = 0
 
     #  define redis queue #####################################################
     redis_connection = Redis(
@@ -128,174 +240,127 @@ def main():
         retry_on_timeout=True,
         retry=Retry(backoff=ExponentialBackoff(), retries=3),
     )
-    if redis_connection.ping():
-        print("Connected to Redis successfully!")
-        print()
+    print("Connected to Redis!")
 
     # Define variables for tracking gestures ##################################
     gesture_detected = False
     gesture_start_time = time.time()
     dwell_time = 3  # 3 seconds
+    keypoint_training_class: int | None = None
 
     # define sound variables for successful queues and muted icon ##############
     pygame.mixer.init()
     muted = False
     chime_file = "Chime.mp3"
 
-    while True:
-        fps = cvFpsCalc.get()
+    try:
+        while True:
+            fps = cvFpsCalc.get()
 
-        # Process Key (ESC: end) #################################################
-        key = cv2.waitKey(10)
-        if key == 27:  # ESC
-            break
-        elif key == 109:  # m keybind (109 is m in ascii)
-            muted = not muted
-            if muted:
-                print("Muted")
-                print()
-            else:
-                print("Unmuted")
-                print()
-        number, mode = select_mode(key, mode)
-
-        # Camera capture #####################################################
-        ret, image = cap.read()
-        if not ret:
-            break
-        image = cv2.flip(image, 1)  # Mirror display
-        debug_image = copy.deepcopy(image)
-
-        # Detection implementation #############################################################
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        image.flags.writeable = False
-        results = hands.process(image)
-        image.flags.writeable = True
-
-        #  ####################################################################
-        if results.multi_hand_landmarks:
-
-            for hand_landmarks, handedness in zip(
-                results.multi_hand_landmarks, results.multi_handedness
-            ):
-                # Bounding box calculation
-                brect = calc_bounding_rect(debug_image, hand_landmarks)
-                # Landmark calculation
-                landmark_list = calc_landmark_list(debug_image, hand_landmarks)
-
-                # Conversion to relative coordinates / normalized coordinates
-                pre_processed_landmark_list = pre_process_landmark(landmark_list)
-                # pre_processed_point_history_list = pre_process_point_history(
-                #     debug_image, point_history
-                # )
-                # Write to the dataset file
-                logging_csv(
-                    number,
-                    mode,
-                    pre_processed_landmark_list,
-                    # pre_processed_point_history_list,
-                )
-
-                # Hand sign classification
-                hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
-
-                # Check if the detected gesture matches the desired punctuation ###################################
-                punc_val = [".", ",", "?", "!", '"']
-
-                # print(f"{keypoint_classifier_labels[hand_sign_id]}: {hand_sign_id}")
-                if keypoint_classifier_labels[hand_sign_id] != "Neutral":
-                    val_to_push = punc_val[hand_sign_id]
-                    if not gesture_detected:
-                        # Start timing the gesture
-                        gesture_detected = True
-                        gesture_start_time = time.time()
-                        # makes the rectangle orange as the dwell time is processing
-                        debug_image = draw_bounding_rect(
-                            use_brect, debug_image, brect, "dwell"
-                        )
-                    elif time.time() - gesture_start_time >= dwell_time:
-                        # Dwell time met, push to queue only once
-                        redis_connection.rpush("gesture_queue", val_to_push)
-                        # makes the rectangle green when the val is queued successfully
-                        debug_image = draw_bounding_rect(
-                            use_brect, debug_image, brect, "success"
-                        )
-                        threading.Thread(
-                            target=play_chime, args=(chime_file, muted)
-                        ).start()
-                        print(f"Pushed {val_to_push} to queue.")
-
-                        queued_val = redis_connection.lpop("gesture_queue")
-                        if queued_val:
-                            print(f"Dequeued {queued_val.decode()} from the queue.")
-                            print()
-                            # reset the reactangle  color back to normal
-                            debug_image = draw_bounding_rect(
-                                use_brect, debug_image, brect
-                            )
-                        gesture_detected = False  # Reset to prevent continuous queuing
+            # Process Keys (ESC: end) #################################################
+            key = cv2.waitKey(10)
+            if key == 27:  # ESC
+                break
+            elif key == 109:  # m keybind (109 is m in ascii)
+                muted = not muted
+                if muted:
+                    info("Muted")
                 else:
-                    # Reset if gesture is not detected in the frame
-                    gesture_detected = False
+                    info("Unmuted")
 
-                # Drawing part
-                debug_image = draw_bounding_rect(use_brect, debug_image, brect)
-                debug_image = draw_landmarks(debug_image, landmark_list)
-                debug_image = draw_info_text(
-                    debug_image,
-                    brect,
-                    handedness,
-                    keypoint_classifier_labels[hand_sign_id],
-                )
+            keypoint_training_class = MODE.pick_class_number()
 
-        debug_image = draw_info(debug_image, fps, mode, number)
+            # Camera capture #####################################################
+            image = capture_image(cap)
+            # the image that we process to detect the hand gestures
+            image = cv2.flip(image, 1)  # Mirror display
+            # the image that we use to draw on to display stuff to the user
+            display = copy.deepcopy(image)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Display the mute icon if the sound is muted #####################################
-        mute_icon = cv2.imread("volume-mute.png", cv2.IMREAD_UNCHANGED)
-        if muted:  # Display the mute icon if the sound is muted
-            if mute_icon is not None:  # Ensure the mute icon is loaded
-                n = 70  # pixels
-                mute_icon_resized = cv2.resize(
-                    mute_icon, (n, n)
-                )  # Resize the mute icon to nxn pixels
+            # Detection implementation #############################################################
+            if (result := hand_detector.process(image)) is not None:
+                for hand_landmarks, handedness in zip(
+                    result.multi_hand_landmarks, result.multi_handedness
+                ):
+                    # Bounding box calculation
+                    brect = calc_bounding_rect(display, hand_landmarks)
+                    # Landmark calculation
+                    landmark_list = calc_landmark_list(display, hand_landmarks)
 
-                h, w, _ = debug_image.shape  # Get the dimensions of the current frame
-                x_offset, y_offset = w - (n + 10), h - (n + 10)  # Bottom-right corner
-                y1, y2 = y_offset, y_offset + mute_icon_resized.shape[0]
-                x1, x2 = x_offset, x_offset + mute_icon_resized.shape[1]
+                    # Conversion to relative coordinates / normalized coordinates
+                    pre_processed_landmark_list = pre_process_landmark(landmark_list)
 
-                # Split color and alpha channels
-                icon_rgb = mute_icon_resized[:, :, :3]
-                icon_alpha = (
-                    mute_icon_resized[:, :, 3] / 255.0
-                )  # Normalize alpha channel to 0-1
+                    # Write to the dataset file
+                    if MODE.is_keypoint() and keypoint_training_class is not None:
+                        MODE.log_data(
+                            keypoint_training_class, pre_processed_landmark_list
+                        )
 
-                # Blend each color channel based on alpha
-                for c in range(3):  # Apply to B, G, R channels
-                    debug_image[y1:y2, x1:x2, c] = (
-                        icon_alpha * icon_rgb[:, :, c]
-                        + (1 - icon_alpha) * debug_image[y1:y2, x1:x2, c]
+                    # Hand sign classification
+                    hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+
+                    # Check if the detected gesture matches the desired punctuation ###################################
+                    # print(f"{keypoint_classifier_labels[hand_sign_id]}: {hand_sign_id}")
+                    if keypoint_classifier_labels[hand_sign_id] != "Neutral":
+                        val_to_push = PUNCTUATION_MARKS[hand_sign_id]
+                        if not gesture_detected:
+                            # Start timing the gesture
+                            gesture_detected = True
+                            gesture_start_time = time.time()
+                            # makes the rectangle orange as the dwell time is processing
+                            display = draw_bounding_rect(
+                                use_brect, display, brect, "dwell"
+                            )
+                        elif time.time() - gesture_start_time >= dwell_time:
+                            # Dwell time met, push to queue only once
+                            redis_connection.rpush("gesture_queue", val_to_push)
+                            # makes the rectangle green when the val is queued successfully
+                            display = draw_bounding_rect(
+                                use_brect, display, brect, "success"
+                            )
+                            threading.Thread(
+                                target=play_chime, args=(chime_file, muted)
+                            ).start()
+                            print(f"Pushed {val_to_push} to queue.")
+
+                            queued_val = redis_connection.lpop("gesture_queue")
+                            if queued_val:
+                                print(f"Dequeued {queued_val.decode()} from the queue.")
+                                print()
+                                # reset the reactangle  color back to normal
+                                display = draw_bounding_rect(use_brect, display, brect)
+                            gesture_detected = (
+                                False  # Reset to prevent continuous queuing
+                            )
+                    else:
+                        # Reset if gesture is not detected in the frame
+                        gesture_detected = False
+
+                    # Drawing part
+                    display = draw_bounding_rect(use_brect, display, brect)
+                    display = draw_landmarks(display, landmark_list)
+                    display = draw_info_text(
+                        display,
+                        brect,
+                        handedness,
+                        keypoint_classifier_labels[hand_sign_id],
                     )
 
-        # Screen reflection #############################################################
-        cv2.imshow("Hand Gesture Recognition", debug_image)
+            display = draw_info(
+                display, fps, MODE.is_keypoint(), keypoint_training_class
+            )
 
-    cap.release()
-    cv2.destroyAllWindows()
+            # Display the mute icon if the sound is muted #####################################
+            display = display_mute_icon(display, muted)
 
-
-def select_mode(key, mode):
-    number = -1
-    if 48 <= key <= 57:  # 0 ~ 9
-        number = key - 48
-    if key == 110:  # n
-        mode = 0
-    if key == 107:  # k
-        mode = 1
-    if key == 104:  # h
-        mode = 2
-    return number, mode
+            # Screen reflection #############################################################
+            cv2.imshow("Hand Gesture Recognition", mat=display)
+    except ImageCaptureError as e:
+        warning(f"ImageCaptureError: {e}")
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
 
 
 def calc_bounding_rect(image, landmarks):
@@ -356,41 +421,6 @@ def pre_process_landmark(landmark_list):
     temp_landmark_list = list(map(normalize_, temp_landmark_list))
 
     return temp_landmark_list
-
-
-def pre_process_point_history(image, point_history):
-    image_width, image_height = image.shape[1], image.shape[0]
-
-    temp_point_history = copy.deepcopy(point_history)
-
-    # Convert to relative coordinates
-    base_x, base_y = 0, 0
-    for index, point in enumerate(temp_point_history):
-        if index == 0:
-            base_x, base_y = point[0], point[1]
-
-        temp_point_history[index][0] = (
-            temp_point_history[index][0] - base_x
-        ) / image_width
-        temp_point_history[index][1] = (
-            temp_point_history[index][1] - base_y
-        ) / image_height
-
-    # Convert to a one-dimensional list
-    temp_point_history = list(itertools.chain.from_iterable(temp_point_history))
-
-    return temp_point_history
-
-
-def logging_csv(number, mode, landmark_list):
-    if mode == 0:
-        pass
-    if mode == 1 and (0 <= number <= 9):
-        csv_path = "model/keypoint_classifier/keypoint.csv"
-        with open(csv_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([number, *landmark_list])
-    return
 
 
 if __name__ == "__main__":

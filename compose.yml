@@ -12,6 +12,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - PULSE_SERVER=unix:/app/pulseaudio_socket
+      - LOG_LEVEL=INFO
       # temporary debug variables
       # - SKIP_RECORDING=True
     devices:
@@ -30,6 +31,8 @@ services:
       # dockerfile is located at gesture-recognition/Dockerfile
       context: gesture-recognition
     environment:
+      - MODE=NORMAL # or "KEYPOINT_TRAINING" to generate training data
+      - LOG_LEVEL=INFO
       - DISPLAY=:0
       - PULSE_SERVER=unix:/app/pulseaudio_socket
     devices:
