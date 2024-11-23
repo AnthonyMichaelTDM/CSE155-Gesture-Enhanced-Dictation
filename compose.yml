@@ -24,6 +24,24 @@ services:
       # also share where the whisper models are stored
       - ~/.cache/whisper:/root/.cache/whisper
       - ~/.cache/huggingface:/root/.cache/huggingface
+  gesture-recognition:
+    # the gesture recognition component needs to have access to the hosts webcam, and the X11 socket
+    build:
+      # dockerfile is located at gesture-recognition/Dockerfile
+      context: gesture-recognition
+    environment:
+      - DISPLAY=:0
+      - PULSE_SERVER=unix:/app/pulseaudio_socket
+    devices:
+      - "/dev/video0:/dev/video0"
+      - "/dev/snd:/dev/snd"
+    group_add:
+      - "audio"
+    volumes:
+      # attach the X11 socket to the container
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      # attach the pulseaudio socket to the container
+      - /run/user/1000/pulse/native:/app/pulseaudio_socket
   redis:
     image: "redis:alpine"
     ports:

@@ -117,8 +117,8 @@ def main():
 
     #  define redis queue #####################################################
     redis_connection = Redis(
-        # host="redis",
-        host="127.0.0.1",
+        host="redis",
+        # host="127.0.0.1",
         port=6379,
         retry_on_timeout=True,
         retry=Retry(backoff=ExponentialBackoff(), retries=10),
