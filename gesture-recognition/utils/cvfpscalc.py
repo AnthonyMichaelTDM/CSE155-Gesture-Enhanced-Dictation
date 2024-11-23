@@ -8,7 +8,7 @@ class CvFpsCalc(object):
         self._freq = 1000.0 / cv.getTickFrequency()
         self._difftimes = deque(maxlen=buffer_len)
 
-    def get(self):
+    def get(self) -> float:
         current_tick = cv.getTickCount()
         different_time = (current_tick - self._start_tick) * self._freq
         self._start_tick = current_tick
