@@ -85,14 +85,18 @@ class Mode(StrEnum):
             return key - 48
         return None
 
-    def log_data(self, number, landmark_list):
+    def log_data(self, number: int | None, landmark_list: list[float]):
         if not self.is_keypoint() or number is None:
             return
 
         csv_path = "model/keypoint_classifier/keypoint.csv"
-        with open(csv_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([number, *landmark_list])
+        try:
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([number, *landmark_list])
+            info(f"Logged data for class {number}")
+        except Exception as e:
+            warning(f"Failed to write to {csv_path}: {e}")
 
 
 MODE = Mode(os.getenv("MODE", "NORMAL"))
@@ -488,7 +492,11 @@ def main():
             fps = cvFpsCalc.get()
 
             # Process Events  ####################################################
-            ui.process_events()
+            keypoint_training_class = (
+                (number if number != keypoint_training_class else None)
+                if (number := ui.process_events()) is not None
+                else keypoint_training_class
+            )
 
             # Camera capture #####################################################
             image = capture_image(cap)

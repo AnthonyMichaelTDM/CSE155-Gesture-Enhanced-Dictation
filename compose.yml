@@ -32,6 +32,7 @@ services:
       context: gesture-recognition
     environment:
       - MODE=NORMAL # or "KEYPOINT_TRAINING" to generate training data
+      # - MODE=KEYPOINT_TRAINING
       - LOG_LEVEL=INFO
       - DISPLAY=:0
       - PULSE_SERVER=unix:/app/pulseaudio_socket
@@ -41,6 +42,8 @@ services:
     group_add:
       - "audio"
     volumes:
+      # attach the keypoint csv file so that the training data can be saved
+      - ./gesture-recognition/model/keypoint_classifier/keypoint.csv:/app/model/keypoint_classifier/keypoint.csv
       # attach the X11 socket to the container
       - /tmp/.X11-unix:/tmp/.X11-unix
       # attach the pulseaudio socket to the container
