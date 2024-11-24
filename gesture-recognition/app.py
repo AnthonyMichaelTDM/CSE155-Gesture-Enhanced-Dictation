@@ -9,7 +9,6 @@ import itertools
 from logging import info, warning
 import logging
 import os
-from tkinter import font
 from typing import Literal, Optional, override
 
 import cv2
@@ -134,14 +133,14 @@ class UI:
         self.running = True
         self.paused = True
         self.mute_button = pygame.Rect(
-            50 + image_width - 100, image_height + 50, 100, 50
+            10 + image_width - 100, image_height + 50, 100, 50
         )
         self.start_stop_button = pygame.Rect(50, image_height + 50, 100, 50)
-        self.text_box = pygame.Rect(50, image_height + 100, image_width, 200)
+        self.text_box = pygame.Rect(50, image_height + 120, image_width - 40, 200)
         self.text = "Waiting to start recording..."
         self.image_width = image_width
         self.image_height = image_height
-
+        
         self.font = pygame.font.Font(None, 36)
         self.font_height = self.font.get_height()
 
@@ -218,16 +217,26 @@ class UI:
         # - text should be selectable
 
         image = cv2.transpose(image)
-        image = pygame.surfarray.make_surface(image)
+        display = pygame.surfarray.make_surface(image)
 
         self.window.fill((255, 255, 255))
-        self.window.blit(image, (50, 50))
+        self.window.blit(display, (50, 50))
+
+        # Draw text box 
+        pygame.draw.rect(
+            self.window, (102, 102, 255), self.text_box, border_radius=25
+        )
+        pygame.draw.rect(
+            self.window, (0, 0, 0), self.text_box, 2, border_radius=25
+        )
 
         # Draw buttons with rounded edges and thin black border
         pygame.draw.rect(
             self.window, (255, 255, 255), self.mute_button, border_radius=10
         )
-        pygame.draw.rect(self.window, (0, 0, 0), self.mute_button, 2, border_radius=10)
+        pygame.draw.rect(
+            self.window, (0, 0, 0), self.mute_button, 2, border_radius=10
+        )
         pygame.draw.rect(
             self.window, (255, 255, 255), self.start_stop_button, border_radius=10
         )
@@ -249,7 +258,7 @@ class UI:
         self.window.blit(
             mute_text,
             (
-                50 + self.image_width - 100 + (100 - mute_text_width) // 2,
+                10 + self.image_width - 100 + (100 - mute_text_width) // 2,
                 self.image_height + 50 + self.font_height // 2,
             ),
         )
@@ -260,7 +269,7 @@ class UI:
                 self.image_height + 50 + self.font_height // 2,
             ),
         )
-        self.window.blit(text, (50, self.image_height + 100 + 10))
+        self.window.blit(text, (70, self.image_height + 130 + 10))
 
         pygame.display.flip()
 
