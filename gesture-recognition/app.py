@@ -11,7 +11,8 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from logging import error, info, warning
-from typing import Callable, Literal, Optional, override
+from turtle import st
+from typing import TYPE_CHECKING, Callable, Literal, Optional, override
 
 import cv2
 import numpy as np
@@ -32,12 +33,30 @@ from utils.draw import (
     draw_info_text,
     draw_landmarks,
 )
+from utils.events import (
+    ControlEvent,
+    GestureEndEvent,
+    GestureEvent,
+    GestureEventType,
+    GestureStartEvent,
+)
 
-PUNCTUATION_MARKS = [".", ",", "?", "!", '"']
+PUNCTUATION_MARKS = {
+    "Period": ".",
+    "Comma": ",",
+    "Question Mark": "?",
+    "Exclamation Point": "!",
+    "Quotes": '"',
+    "Neutral": "",
+}
+
+DWELL_TIME = 0.25  # second(s)
+# minimum amount of time a gesture must be held to be considered a gesture
+MIN_GESTURE_TIME = 0.05  # second(s)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-PUNCTUATED_TEXT_CHANNEL = "punctuated_text"
+PUNCTUATED_TEXT_CHANNEL = "punctuation_text"
 CONTROL_CHANNEL = "control"
 GESTURE_CHANNEL = "gesture_events"
 
@@ -175,6 +194,7 @@ class UI:
         self.chime_file = "Chime.mp3"
         self.running = True
         self.paused = True
+        self.recording_start_time = time.time()
         self.mute_button = pygame.Rect(
             10 + image_width - 100, image_height + 50, 100, 50
         )
@@ -218,6 +238,7 @@ class UI:
         else:
             self.redis.publish(CONTROL_CHANNEL, ControlEvent.start)
             self.text = "Recording..."
+            self.recording_start_time = time.time()
 
         pass
 
@@ -415,6 +436,7 @@ def main():
     min_tracking_confidence = args.min_tracking_confidence
 
     use_brect = True
+    bounding_box_type = BoundingBoxType.Default
 
     # Camera preparation #####################################################
     cap = cv2.VideoCapture(cap_device)
@@ -451,10 +473,10 @@ def main():
     print("Connected to Redis!")
 
     # Define variables for tracking gestures ##################################
-    gesture_detected = False
-    gesture_start_time = time.time()
-    dwell_time = 3  # 3 seconds
+    last_gesture_start: float | None = None
+    last_gesture_detected: str | None = None
     keypoint_training_class: int | None = None
+    start_sent = False
 
     # Set up UI ###############################################################
     ui = UI(redis_connection)
@@ -474,84 +496,216 @@ def main():
             # the image that we use to draw on to display stuff to the user
             display = copy.deepcopy(image)
 
-            # Detection implementation #############################################################
-            if (result := hand_detector.process(image)) is not None:
-                hand_landmarks = result.hand_landmarks
-                handedness = result.handedness
-
-                # Bounding box calculation
-                brect = calc_bounding_rect(display, hand_landmarks)
-                # Landmark calculation
-                landmark_list = calc_landmark_list(display, hand_landmarks)
-
-                # Conversion to relative coordinates / normalized coordinates
-                pre_processed_landmark_list = pre_process_landmark(landmark_list)
-
-                # Write to the dataset file
-                if MODE.is_keypoint() and keypoint_training_class is not None:
-                    MODE.log_data(keypoint_training_class, pre_processed_landmark_list)
-
-                # Hand sign classification
-                hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
-
-                # Check if the detected gesture matches the desired punctuation ###################################
-                # print(f"{keypoint_classifier_labels[hand_sign_id]}: {hand_sign_id}")
-                if (
-                    keypoint_classifier_labels[hand_sign_id] != "Neutral"
-                    and not gesture_detected
-                ):
-                    # Start timing the gesture
-                    gesture_detected = True
-                    gesture_start_time = time.time()
-                    # makes the rectangle orange as the dwell time is processing
-                    display = draw_bounding_rect(
-                        use_brect, display, brect, BoundingBoxType.Dwell
-                    )
-                elif (
-                    keypoint_classifier_labels[hand_sign_id] != "Neutral"
-                    and time.time() - gesture_start_time >= dwell_time
-                ):
-                    val_to_push = PUNCTUATION_MARKS[hand_sign_id]
-                    # Dwell time met, push to queue only once
-                    redis_connection.rpush("gesture_queue", val_to_push)
-                    # makes the rectangle green when the val is queued successfully
-                    display = draw_bounding_rect(
-                        use_brect, display, brect, BoundingBoxType.Success
-                    )
-                    ui.play_chime()
-                    print(f"Pushed {val_to_push} to queue.")
-
-                    queued_val = redis_connection.lpop("gesture_queue")
-                    if queued_val:
-                        print(f"Dequeued {queued_val.decode()} from the queue.")
-                        print()
-                        # reset the reactangle  color back to normal
-                        display = draw_bounding_rect(use_brect, display, brect)
-                    gesture_detected = False  # Reset to prevent continuous queuing
-                else:
-                    # Reset if gesture is not detected in the frame
-                    gesture_detected = False
-
-                # Drawing part
-                display = draw_bounding_rect(use_brect, display, brect)
-                display = draw_landmarks(display, landmark_list)
-                display = draw_info_text(
-                    display,
-                    brect,
-                    handedness,
-                    keypoint_classifier_labels[hand_sign_id],
-                )
-
+            # Preliminary displays (fps and mute icon) #####################################
             display = draw_info(
                 display, fps, MODE.is_keypoint(), keypoint_training_class
             )
-
-            # Display the mute icon if the sound is muted #####################################
             display = display_mute_icon(display, ui.muted)
 
-            # Screen reflection #############################################################
-            # cv2.imshow("Hand Gesture Recognition", mat=display)
+            # Detection implementation #############################################################
+            result = hand_detector.process(image)
+
+            if result is None:
+                if (
+                    last_gesture_start is not None
+                    and time.time() - last_gesture_start < MIN_GESTURE_TIME
+                ):
+                    last_gesture_detected = None
+                    last_gesture_start = None
+                    bounding_box_type = BoundingBoxType.Default
+                ui.draw(display)
+                continue
+
+            hand_landmarks = result.hand_landmarks
+            handedness = result.handedness
+
+            # Landmark calculation
+            landmark_list = calc_landmark_list(display, landmarks=hand_landmarks)
+
+            # Conversion to relative coordinates / normalized coordinates
+            pre_processed_landmark_list = pre_process_landmark(
+                landmark_list, handedness
+            )
+
+            # Hand sign classification
+            hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+
+            # Extract the class of the keypoints
+            detected_gesture_class = keypoint_classifier_labels[hand_sign_id]
+
+            # Write to the dataset file if in keypoint training mode
+            if MODE.is_keypoint() and keypoint_training_class is not None:
+                MODE.log_data(keypoint_training_class, pre_processed_landmark_list)
+
+            # landmark, bounding box, and info display #################################################################
+            # Bounding box calculation
+            brect = calc_bounding_rect(display, hand_landmarks)
+            # check detected gesture against previous gesture to determine bounding box type
+            if detected_gesture_class != last_gesture_detected:
+                bounding_box_type = BoundingBoxType.Default
+            elif (
+                last_gesture_start is not None
+                and time.time() - last_gesture_start >= DWELL_TIME
+            ):
+                bounding_box_type = BoundingBoxType.Success
+            elif (
+                last_gesture_start is not None
+                and time.time() - last_gesture_start >= MIN_GESTURE_TIME
+            ):
+                bounding_box_type = BoundingBoxType.Dwell
+            else:
+                bounding_box_type = BoundingBoxType.Default
+
+            display = draw_landmarks(display, landmark_list)
+            display = draw_bounding_rect(use_brect, display, brect, bounding_box_type)
+            display = draw_info_text(
+                display,
+                brect,
+                handedness,
+                keypoint_classifier_labels[hand_sign_id],
+            )
+
+            # Render GUI #############################################################
             ui.draw(display)
+
+            # Gesture Event Sending ###################################
+            # print(f"{keypoint_classifier_labels[hand_sign_id]}: {hand_sign_id}")
+
+            event_to_send: Optional[GestureEvent] = None
+
+            # some invariants
+            assert not (
+                last_gesture_detected is None and last_gesture_start is not None
+            ), "last_gesture_detected should not be None if last_gesture_start is not None"
+            assert not (
+                last_gesture_detected is not None and last_gesture_start is None
+            ), "last_gesture_start should not be None if last_gesture_detected is not None"
+            assert last_gesture_detected != "Neutral", "we don't track neutral gestures"
+
+            match (
+                last_gesture_detected != detected_gesture_class,
+                last_gesture_detected is None,
+                detected_gesture_class == "Neutral",
+            ):
+                # we have no previous gesture, and the current gesture is neutral
+                case (True, True, True):
+                    pass
+                # we have no previous gesture, and the current gesture is not neutral
+                case (True, True, False):
+                    # start timing the gesture
+                    last_gesture_start = time.time()
+                    last_gesture_detected = detected_gesture_class
+                # we have a previous gesture (different from the current gesture), and the current gesture is neutral
+                case (True, False, True):
+                    if TYPE_CHECKING:
+                        assert last_gesture_detected is not None
+                    ## this happened before the minimum gesture time was reached
+                    if (
+                        last_gesture_start is not None
+                        and time.time() - last_gesture_start <= MIN_GESTURE_TIME
+                    ):
+                        # clear the previous gesture
+                        last_gesture_start = None
+                        last_gesture_detected = None
+                    ## this happened after the dwell time was reached
+                    elif (
+                        last_gesture_start is not None
+                        and time.time() - last_gesture_start >= DWELL_TIME
+                    ):
+                        # we want to send the previous gesture
+                        event_to_send = GestureEvent(
+                            type=GestureEventType.End,
+                            event=GestureEndEvent(
+                                punctuation=PUNCTUATION_MARKS[last_gesture_detected],
+                                start_time=max(
+                                    0, last_gesture_start - ui.recording_start_time
+                                ),
+                                end_time=max(0, time.time() - ui.recording_start_time),
+                                confidence=1.0,
+                            ),
+                        )
+                        start_sent = False
+                        last_gesture_start = None
+                        last_gesture_detected = None
+                    ## this happened after the minimum gesture time was reached, but before the dwell time was reached
+                    else:
+                        # ignore it, this was probably a mistake
+                        pass
+                # we have a previous gesture (different from the current gesture), and the current gesture is not neutral
+                case (True, False, False):
+                    if TYPE_CHECKING:
+                        assert last_gesture_detected is not None
+                    ## this happened before the minimum gesture time was reached
+                    if (
+                        last_gesture_start is not None
+                        and time.time() - last_gesture_start <= MIN_GESTURE_TIME
+                    ):
+                        # we have a new gesture
+                        last_gesture_start = time.time()
+                        last_gesture_detected = detected_gesture_class
+                    ## this happened after the dwell time was reached
+                    elif (
+                        last_gesture_start is not None
+                        and time.time() - last_gesture_start >= DWELL_TIME
+                    ):
+                        # we have a new gesture, and we want to send the previous gesture
+                        event_to_send = GestureEvent(
+                            type=GestureEventType.End,
+                            event=GestureEndEvent(
+                                punctuation=PUNCTUATION_MARKS[last_gesture_detected],
+                                start_time=max(
+                                    0, last_gesture_start - ui.recording_start_time
+                                ),
+                                end_time=max(0, time.time() - ui.recording_start_time),
+                                confidence=1.0,
+                            ),
+                        )
+                        start_sent = False
+                        last_gesture_start = time.time()
+                        last_gesture_detected = detected_gesture_class
+                    ## this happened after the minimum gesture time was reached, but before the dwell time was reached
+                    else:
+                        # ignore it, this was probably a mistake
+                        pass
+                # can't happen due to the invariants
+                case (False, True, _):
+                    pass
+                case (False, _, True):
+                    pass
+                # we have a previous gesture (the same as the current gesture), and the current gesture is not neutral
+                case (False, False, False):
+                    if TYPE_CHECKING:
+                        assert last_gesture_detected is not None
+                    ## this happened after the minimum gesture time was reached, and we haven't sent the start event yet
+                    if (
+                        last_gesture_start is not None
+                        and time.time() - last_gesture_start >= MIN_GESTURE_TIME
+                        and not start_sent
+                    ):
+                        # we want to send the start event
+                        event_to_send = GestureEvent(
+                            type=GestureEventType.Start,
+                            event=GestureStartEvent(
+                                punctuation=PUNCTUATION_MARKS[detected_gesture_class],
+                                start_time=max(
+                                    0, last_gesture_start - ui.recording_start_time
+                                ),
+                            ),
+                        )
+                        start_sent = True
+                    else:
+                        pass
+
+            if event_to_send is not None:
+                if ui.paused:
+                    warning(
+                        f"Wanted to sent event {event_to_send}, but recording is paused"
+                    )
+                else:
+                    redis_connection.publish(
+                        GESTURE_CHANNEL, event_to_send.model_dump_json()
+                    )
+
     except ImageCaptureError as e:
         warning(f"ImageCaptureError: {e}")
     finally:
@@ -595,7 +749,7 @@ def calc_landmark_list(image, landmarks: list[Landmark]) -> list[Point]:
     return landmark_point
 
 
-def pre_process_landmark(landmark_list):
+def pre_process_landmark(landmark_list: list[Point], handedness: str) -> list[float]:
     temp_landmark_list = copy.deepcopy(landmark_list)
 
     # Convert to relative coordinates
@@ -604,8 +758,8 @@ def pre_process_landmark(landmark_list):
         if index == 0:
             base_x, base_y = landmark_point[0], landmark_point[1]
 
-        temp_landmark_list[index][0] = temp_landmark_list[index][0] - base_x
-        temp_landmark_list[index][1] = temp_landmark_list[index][1] - base_y
+        temp_landmark_list[index][0] = temp_landmark_list[index][0] - base_x  # type: ignore
+        temp_landmark_list[index][1] = temp_landmark_list[index][1] - base_y  # type: ignore
 
     # Convert to a one-dimensional list
     temp_landmark_list = list(itertools.chain.from_iterable(temp_landmark_list))
@@ -613,10 +767,13 @@ def pre_process_landmark(landmark_list):
     # Normalization
     max_value = max(list(map(abs, temp_landmark_list)))
 
-    def normalize_(n):
+    def normalize_(n: int) -> float:
         return n / max_value
 
     temp_landmark_list = list(map(normalize_, temp_landmark_list))
+
+    if handedness == "Left":
+        temp_landmark_list = [1.0 - x for x in temp_landmark_list]
 
     return temp_landmark_list
 
