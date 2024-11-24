@@ -7,6 +7,10 @@
 >xhost +local:
 >```
 
+## Model
+
+![model](model.png)
+
 ## Usage
 
 ### gestures

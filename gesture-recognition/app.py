@@ -85,18 +85,17 @@ class Mode(StrEnum):
             return key - 48
         return None
 
-    def log_data(self, number: int | None, landmark_list: list[float]):
+    def log_data(self, number: int | None, landmark_list: list[tuple[float, float]]):
         if not self.is_keypoint() or number is None:
             return
 
+        # convert to a one-dimensional list
+        temp_landmark_list = list(itertools.chain.from_iterable(landmark_list))
+
         csv_path = "model/keypoint_classifier/keypoint.csv"
-        try:
-            with open(csv_path, "a", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow([number, *landmark_list])
-            info(f"Logged data for class {number}")
-        except Exception as e:
-            warning(f"Failed to write to {csv_path}: {e}")
+        with open(csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([number, *temp_landmark_list])
 
 
 MODE = Mode(os.getenv("MODE", "NORMAL"))
@@ -769,26 +768,21 @@ def calc_landmark_list(image, landmarks: list[Landmark]) -> list[Point]:
     return landmark_point
 
 
-def pre_process_landmark(landmark_list: list[Point]) -> list[float]:
+def pre_process_landmark(landmark_list: list[Point]) -> list[tuple[float, float]]:
     temp_landmark_list = copy.deepcopy(landmark_list)
 
     # Convert to relative coordinates
-    base_x, base_y = 0, 0
-    for index, landmark_point in enumerate(temp_landmark_list):
-        if index == 0:
-            base_x, base_y = landmark_point[0], landmark_point[1]
-
-        temp_landmark_list[index][0] = temp_landmark_list[index][0] - base_x  # type: ignore
-        temp_landmark_list[index][1] = temp_landmark_list[index][1] - base_y  # type: ignore
-
-    # Convert to a one-dimensional list
-    temp_landmark_list = list(itertools.chain.from_iterable(temp_landmark_list))
+    base_x, base_y = landmark_list[0][0], landmark_list[0][1]
+    for landmark_point in temp_landmark_list:
+        landmark_point[0] = landmark_point[0] - base_x  # type: ignore
+        landmark_point[1] = landmark_point[1] - base_y  # type: ignore
 
     # Normalization
-    max_value = max(list(map(abs, temp_landmark_list)))
+    # this isn't the best way to do this, but its necessary so we can reuse our old data
+    max_value = max(list(map(lambda x: max(abs(x[0]), abs(x[1])), temp_landmark_list)))
 
-    def normalize_(n: int) -> float:
-        return n / max_value
+    def normalize_(n: Point) -> tuple[float, float]:
+        return (n[0] / max_value, n[1] / max_value)
 
     temp_landmark_list = list(map(normalize_, temp_landmark_list))
 

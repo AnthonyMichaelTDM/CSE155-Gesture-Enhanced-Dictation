@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+from typing import Sequence
 import numpy as np
 import tensorflow as tf
 
@@ -20,12 +21,11 @@ class KeyPointClassifier(object):
 
     def __call__(
         self,
-        landmark_list,
+        landmark_list: list[Sequence[float]],
     ) -> tuple[np.intp, float]:
         input_details_tensor_index = self.input_details[0]["index"]
-        self.interpreter.set_tensor(
-            input_details_tensor_index, np.array([landmark_list], dtype=np.float32)
-        )
+        input_tensor = np.array([landmark_list], dtype=np.float32)
+        self.interpreter.set_tensor(input_details_tensor_index, input_tensor)
         self.interpreter.invoke()
 
         output_details_tensor_index = self.output_details[0]["index"]
