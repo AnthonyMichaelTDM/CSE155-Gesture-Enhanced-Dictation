@@ -1,6 +1,7 @@
 import logging
 import os
 import string
+import threading
 import wave
 from enum import Enum, StrEnum
 from logging import debug, error, info, warning
@@ -51,8 +52,13 @@ class ControlEvent(StrEnum):
     A control event from the control channel
     """
 
+    # Start recording audio
     start = '"Start"'
+    # Stop recording audio and start transcribing the audio
     stop_recording = '"Stop Recording"'
+    # Tell the punctuation service to stop listening for word/gesture events, and process and upload its results
+    stop = '"Stop"'
+    # Tells the components to exit
     exit = '"Exit"'
 
     @classmethod
@@ -75,12 +81,13 @@ class RedisEventListener:
     def __init__(self, redis_conn: Redis):
         self.redis_conn: Redis = redis_conn
         self.pubsubs: dict[str, tuple[PubSub, Callable]] = {}
+        self.pubsub_threads: dict[str, threading.Thread] = {}
 
     def subscribe(self, channel: str, callback: Callable[[str], None]):
         pubsub: PubSub = self.redis_conn.pubsub()
         pubsub.subscribe(**{channel: self._create_message_handler(callback)})
         self.pubsubs.update({channel: (pubsub, callback)})
-        self.pubsub_thread = pubsub.run_in_thread(
+        self.pubsub_threads[channel] = pubsub.run_in_thread(
             sleep_time=0.001,
             exception_handler=RedisEventListener.exception_handler,
         )
@@ -91,6 +98,14 @@ class RedisEventListener:
                 callback(message["data"].decode("utf-8"))
 
         return message_handler
+
+    def unsubscribe(self, channel: str):
+        if channel not in self.pubsubs:
+            return
+
+        pubsub, _ = self.pubsubs[channel]
+        pubsub.close()
+        del self.pubsubs[channel]
 
 
 class AudioTranscriber:
@@ -329,6 +344,9 @@ class StateMachine:
                             # if we're not running with redis, then exit after transcription is complete
                             if not PRODUCTION:
                                 self.control_event_handler(ControlEvent.exit)
+                            # otherwise, tell the punctuation service to start processing
+                            elif self.redis is not None:
+                                self.redis.publish(CONTROL_CHANNEL, ControlEvent.stop)
                 case _State.EXIT:
                     info("Exiting application")
                     if self.redis is not None:
