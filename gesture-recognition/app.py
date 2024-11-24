@@ -457,7 +457,7 @@ def main():
     keypoint_training_class: int | None = None
 
     # Set up UI ###############################################################
-    ui = UI()
+    ui = UI(redis_connection)
 
     try:
         while ui.running:

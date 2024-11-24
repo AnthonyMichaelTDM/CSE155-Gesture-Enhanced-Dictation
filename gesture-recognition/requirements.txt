@@ -4,3 +4,4 @@ tensorflow
 redis
 pygame
 scikit-learn
+pydantic
