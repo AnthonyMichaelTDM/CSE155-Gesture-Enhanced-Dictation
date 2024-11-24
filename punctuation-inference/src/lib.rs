@@ -53,10 +53,10 @@ use either::Either;
 
 use crate::events::{GestureEvent, WordEvent};
 
-const WORD_END_GESTURE_END_TIME_THRESHOLD: f64 = 0.2;
-const WORD_START_GESTURE_END_TIME_THRESHOLD: f64 = 0.2;
-const WORD_START_GESTURE_START_TIME_THRESHOLD: f64 = 0.2;
-const WORD_END_GESTURE_START_TIME_THRESHOLD: f64 = 0.2;
+const WORD_END_GESTURE_END_TIME_THRESHOLD: f64 = 0.3;
+const WORD_START_GESTURE_END_TIME_THRESHOLD: f64 = 0.3;
+const WORD_START_GESTURE_START_TIME_THRESHOLD: f64 = 0.3;
+const WORD_END_GESTURE_START_TIME_THRESHOLD: f64 = 0.3;
 
 pub trait PunctuationInference {
     fn register_word_event(&mut self, word: WordEvent);
