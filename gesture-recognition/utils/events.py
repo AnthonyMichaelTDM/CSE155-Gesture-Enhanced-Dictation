@@ -17,6 +17,8 @@ class ControlEvent(StrEnum):
     stop_recording = '"Stop Recording"'
     # Tells the components to exit
     exit = '"Exit"'
+    # Tells the punctuation inference component to clear its internal state
+    reset = '"Reset"'
 
     @classmethod
     def from_str(cls, event_str: str) -> Optional["ControlEvent"]:

@@ -236,6 +236,7 @@ class UI:
             self.redis.publish(CONTROL_CHANNEL, ControlEvent.stop_recording)
             self.text = "Recording stopped, please wait for processing to finish... "
         else:
+            self.redis.publish(CONTROL_CHANNEL, ControlEvent.reset)
             self.redis.publish(CONTROL_CHANNEL, ControlEvent.start)
             self.text = "Recording..."
             self.recording_start_time = time.time()
