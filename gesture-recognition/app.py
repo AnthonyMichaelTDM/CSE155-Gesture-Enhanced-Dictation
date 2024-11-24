@@ -476,6 +476,7 @@ def main():
     # Define variables for tracking gestures ##################################
     last_gesture_start: float | None = None
     last_gesture_detected: str | None = None
+    last_gesture_confidence: float | None = None
     keypoint_training_class: int | None = None
     start_sent = False
 
@@ -524,12 +525,10 @@ def main():
             landmark_list = calc_landmark_list(display, landmarks=hand_landmarks)
 
             # Conversion to relative coordinates / normalized coordinates
-            pre_processed_landmark_list = pre_process_landmark(
-                landmark_list, handedness
-            )
+            pre_processed_landmark_list = pre_process_landmark(landmark_list)
 
             # Hand sign classification
-            hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+            hand_sign_id, confidence = keypoint_classifier(pre_processed_landmark_list)
 
             # Extract the class of the keypoints
             detected_gesture_class = keypoint_classifier_labels[hand_sign_id]
@@ -564,6 +563,7 @@ def main():
                 brect,
                 handedness,
                 keypoint_classifier_labels[hand_sign_id],
+                confidence,
             )
 
             # Render GUI #############################################################
@@ -596,10 +596,12 @@ def main():
                     # start timing the gesture
                     last_gesture_start = time.time()
                     last_gesture_detected = detected_gesture_class
+                    last_gesture_confidence = confidence
                 # we have a previous gesture (different from the current gesture), and the current gesture is neutral
                 case (True, False, True):
                     if TYPE_CHECKING:
                         assert last_gesture_detected is not None
+                        assert last_gesture_confidence is not None
                     ## this happened before the minimum gesture time was reached
                     if (
                         last_gesture_start is not None
@@ -608,6 +610,7 @@ def main():
                         # clear the previous gesture
                         last_gesture_start = None
                         last_gesture_detected = None
+                        last_gesture_confidence = None
                     ## this happened after the dwell time was reached
                     elif (
                         last_gesture_start is not None
@@ -622,12 +625,13 @@ def main():
                                     0, last_gesture_start - ui.recording_start_time
                                 ),
                                 end_time=max(0, time.time() - ui.recording_start_time),
-                                confidence=1.0,
+                                confidence=last_gesture_confidence,
                             ),
                         )
                         start_sent = False
                         last_gesture_start = None
                         last_gesture_detected = None
+                        last_gesture_confidence = None
                     ## this happened after the minimum gesture time was reached, but before the dwell time was reached
                     else:
                         # ignore it, this was probably a mistake
@@ -636,6 +640,7 @@ def main():
                 case (True, False, False):
                     if TYPE_CHECKING:
                         assert last_gesture_detected is not None
+                        assert last_gesture_confidence is not None
                     ## this happened before the minimum gesture time was reached
                     if (
                         last_gesture_start is not None
@@ -644,6 +649,7 @@ def main():
                         # we have a new gesture
                         last_gesture_start = time.time()
                         last_gesture_detected = detected_gesture_class
+                        last_gesture_confidence = confidence
                     ## this happened after the dwell time was reached
                     elif (
                         last_gesture_start is not None
@@ -658,15 +664,17 @@ def main():
                                     0, last_gesture_start - ui.recording_start_time
                                 ),
                                 end_time=max(0, time.time() - ui.recording_start_time),
-                                confidence=1.0,
+                                confidence=confidence,
                             ),
                         )
                         start_sent = False
                         last_gesture_start = time.time()
                         last_gesture_detected = detected_gesture_class
+                        last_gesture_confidence = confidence
                     ## this happened after the minimum gesture time was reached, but before the dwell time was reached
                     else:
                         # ignore it, this was probably a mistake
+
                         pass
                 # can't happen due to the invariants
                 case (False, True, _):
@@ -695,6 +703,9 @@ def main():
                         )
                         start_sent = True
                     else:
+                        last_gesture_confidence = max(
+                            last_gesture_confidence or 0, confidence
+                        )
                         pass
 
             if event_to_send is not None:
@@ -750,7 +761,7 @@ def calc_landmark_list(image, landmarks: list[Landmark]) -> list[Point]:
     return landmark_point
 
 
-def pre_process_landmark(landmark_list: list[Point], handedness: str) -> list[float]:
+def pre_process_landmark(landmark_list: list[Point]) -> list[float]:
     temp_landmark_list = copy.deepcopy(landmark_list)
 
     # Convert to relative coordinates
@@ -772,9 +783,6 @@ def pre_process_landmark(landmark_list: list[Point], handedness: str) -> list[fl
         return n / max_value
 
     temp_landmark_list = list(map(normalize_, temp_landmark_list))
-
-    if handedness == "Left":
-        temp_landmark_list = [1.0 - x for x in temp_landmark_list]
 
     return temp_landmark_list
 

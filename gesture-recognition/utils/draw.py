@@ -249,20 +249,42 @@ def draw_bounding_rect(
 
 
 def draw_info_text(
-    image: MatLike, brect: cv2.typing.Rect, handedness: str, hand_sign_text: str
+    image: MatLike,
+    brect: cv2.typing.Rect,
+    handedness: str,
+    hand_sign_text: str,
+    confidence: float,
 ) -> MatLike:
-    x, y, w, _ = brect
-    pt1 = (x, y)
+    x, y, w, h = brect
 
-    cv2.rectangle(image, pt1, (x + w, y - 22), BLACK, -1)
-
+    # draw the handedness and hand sign text above the bounding box
+    label_pt1 = (x, y - 2)
+    label_pt2 = (x + w, y - 24)
+    label_text_pt = (x + 5, y - 6)
+    cv2.rectangle(image, label_pt1, label_pt2, BLACK, -1)
     info_text = handedness
     if hand_sign_text != "":
         info_text = info_text + ":" + hand_sign_text
     cv2.putText(
         image,
         info_text,
-        (x + 5, y - 4),
+        label_text_pt,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        WHITE,
+        1,
+        cv2.LINE_AA,
+    )
+
+    # draw the confidence value below the bounding box
+    conf_pt1 = (x, y + h + 2)
+    conf_pt2 = (x + w, y + h + 24)
+    conf_text_pt = (x + 5, y + h + 18)
+    cv2.rectangle(image, conf_pt1, conf_pt2, BLACK, -1)
+    cv2.putText(
+        image,
+        f"{confidence * 100:.2f}%",
+        conf_text_pt,
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
         WHITE,
