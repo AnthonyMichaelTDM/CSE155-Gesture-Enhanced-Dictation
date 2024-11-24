@@ -229,6 +229,7 @@ class UI:
         pygame.draw.rect(
             self.window, (0, 0, 0), self.text_box, 2, border_radius=25
         )
+        self.window.blit(display, (50, 50))
 
         # Draw buttons with rounded edges and thin black border
         pygame.draw.rect(
