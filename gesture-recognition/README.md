@@ -7,10 +7,13 @@
 >xhost +local:
 >```
 
-and
+## Usage
 
->[!note]
-> most of this readme is obsolete, as it was ripped from the repo we used as an initial template.
+### gestures
+
+![gestures](gestures.jpg)
+
+## directory structure
 
 ### app.py
 
@@ -39,7 +42,7 @@ The following files are stored.
 
 This is a module for FPS measurement.
 
-# Training
+## Training
 
 Hand sign recognition and finger gesture recognition can add and change training data and retrain the model.
 
@@ -81,18 +84,6 @@ and modify the label of "model/keypoint_classifier/keypoint_classifier_label.csv
 
 The image of the model prepared in "[keypoint_classification.ipynb](keypoint_classification.ipynb)" is as follows.
 <img src="https://user-images.githubusercontent.com/37477845/102246723-69c76a00-3f42-11eb-8a4b-7c6b032b7e71.png" width="50%"><br><br>
-
-# Reference
-
-* [MediaPipe](https://mediapipe.dev/)
-
-# Author
-
-Kazuhito Takahashi(<https://twitter.com/KzhtTkhs>)
-
-# Translation and other improvements
-
-Nikita Kiselov(<https://github.com/kinivi>)
 
 # License
 
