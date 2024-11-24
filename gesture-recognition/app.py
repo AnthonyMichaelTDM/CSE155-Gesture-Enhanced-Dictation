@@ -1,21 +1,29 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import csv
-import copy
 import argparse
-from dataclasses import dataclass
-from enum import StrEnum
+import copy
+import csv
 import itertools
-from logging import info, warning
 import logging
 import os
-from typing import Literal, Optional, override
+import threading
+import time
+from dataclasses import dataclass
+from enum import StrEnum
+from logging import error, info, warning
+from typing import Callable, Literal, Optional, override
 
 import cv2
-from cv2.typing import MatLike, Point, Rect
 import numpy as np
+import pygame
+from cv2.typing import MatLike, Point, Rect
 from mediapipe.python.solutions import hands as mp_hands
+from redis import Redis
+from redis.backoff import ExponentialBackoff
+from redis.client import PubSub
+from redis.retry import Retry
 
+from model import KeyPointClassifier
 from utils.cvfpscalc import CvFpsCalc
 from utils.draw import (
     BoundingBoxType,
@@ -28,6 +36,10 @@ from utils.draw import (
 PUNCTUATION_MARKS = [".", ",", "?", "!", '"']
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+PUNCTUATED_TEXT_CHANNEL = "punctuated_text"
+CONTROL_CHANNEL = "control"
+GESTURE_CHANNEL = "gesture_events"
 
 
 class Mode(StrEnum):
@@ -85,6 +97,44 @@ class HandResult:
     # hand_world_landmarks: list
 
 
+class RedisEventListener:
+    """Listens for events on redis channels and calls the appropriate callback when an event is received."""
+
+    @staticmethod
+    def exception_handler(e, ps, worker):
+        warning(f"Worker thread encountered an exception: {e}")
+        worker.stop()
+
+    def __init__(self, redis_conn: Redis):
+        self.redis_conn: Redis = redis_conn
+        self.pubsubs: dict[str, tuple[PubSub, Callable]] = {}
+        self.pubsub_threads: dict[str, threading.Thread] = {}
+
+    def subscribe(self, channel: str, callback: Callable[[str], None]):
+        pubsub: PubSub = self.redis_conn.pubsub()
+        pubsub.subscribe(**{channel: self._create_message_handler(callback)})
+        self.pubsubs.update({channel: (pubsub, callback)})
+        self.pubsub_threads[channel] = pubsub.run_in_thread(
+            sleep_time=0.001,
+            exception_handler=RedisEventListener.exception_handler,
+        )
+
+    def _create_message_handler(self, callback: Callable[[str], None]):
+        def message_handler(message):
+            if message["type"] == "message":
+                callback(message["data"].decode("utf-8"))
+
+        return message_handler
+
+    def unsubscribe(self, channel: str):
+        if channel not in self.pubsubs:
+            return
+
+        pubsub, _ = self.pubsubs[channel]
+        pubsub.close()
+        del self.pubsubs[channel]
+
+
 class HandDetector(mp_hands.Hands):
     def __init__(self, **kwargs):
         kwargs["max_num_hands"] = 1
@@ -117,7 +167,7 @@ class HandDetector(mp_hands.Hands):
 
 
 class UI:
-    def __init__(self, image_width=960, image_height=540):
+    def __init__(self, redis_connection: Redis, image_width=960, image_height=540):
         pygame.init()
         pygame.mixer.init()
         self.window = pygame.display.set_mode((1024, 768))
@@ -133,9 +183,20 @@ class UI:
         self.text = "Waiting to start recording..."
         self.image_width = image_width
         self.image_height = image_height
-        
         self.font = pygame.font.Font(None, 36)
         self.font_height = self.font.get_height()
+
+        self.redis = redis_connection
+        self.punctuated_text_listener = RedisEventListener(redis_connection)
+        self.punctuated_text_listener.subscribe(
+            PUNCTUATED_TEXT_CHANNEL, lambda x: self.puntuated_text_callback(x)
+        )
+
+    def puntuated_text_callback(self, text):
+        if not self.paused:
+            error("Received punctuated text while recording is still ongoing")
+
+        self.text = text
 
     def handle_start_stop_button(self):
         """Called when the start/stop button is clicked
@@ -151,9 +212,12 @@ class UI:
 
         self.paused = not self.paused
 
-        self.text = (
-            "Recording..." if not self.paused else "Waiting to start recording..."
-        )
+        if self.paused:
+            self.redis.publish(CONTROL_CHANNEL, ControlEvent.stop_recording)
+            self.text = "Recording stopped, please wait for processing to finish... "
+        else:
+            self.redis.publish(CONTROL_CHANNEL, ControlEvent.start)
+            self.text = "Recording..."
 
         pass
 
@@ -215,22 +279,16 @@ class UI:
         self.window.fill((255, 255, 255))
         self.window.blit(display, (50, 50))
 
-        # Draw text box 
-        pygame.draw.rect(
-            self.window, (102, 102, 255), self.text_box, border_radius=25
-        )
-        pygame.draw.rect(
-            self.window, (0, 0, 0), self.text_box, 2, border_radius=25
-        )
+        # Draw text box
+        pygame.draw.rect(self.window, (102, 102, 255), self.text_box, border_radius=25)
+        pygame.draw.rect(self.window, (0, 0, 0), self.text_box, 2, border_radius=25)
         self.window.blit(display, (50, 50))
 
         # Draw buttons with rounded edges and thin black border
         pygame.draw.rect(
             self.window, (255, 255, 255), self.mute_button, border_radius=10
         )
-        pygame.draw.rect(
-            self.window, (0, 0, 0), self.mute_button, 2, border_radius=10
-        )
+        pygame.draw.rect(self.window, (0, 0, 0), self.mute_button, 2, border_radius=10)
         pygame.draw.rect(
             self.window, (255, 255, 255), self.start_stop_button, border_radius=10
         )
@@ -497,6 +555,9 @@ def main():
     except ImageCaptureError as e:
         warning(f"ImageCaptureError: {e}")
     finally:
+        redis_connection.publish(CONTROL_CHANNEL, ControlEvent.exit)
+        redis_connection.shutdown()
+        redis_connection.close()
         cap.release()
         pygame.quit()
         cv2.destroyAllWindows()
