@@ -28,7 +28,7 @@ impl FromRedisValue for Event {
 pub enum ControlEvent {
     /// Start the punctuation inference process
     Start,
-    /// Stop the punctuation inference process
+    /// Stop the punctuation inference process and upload the results
     Stop,
     /// Reset the punctuation inference process
     Reset,
