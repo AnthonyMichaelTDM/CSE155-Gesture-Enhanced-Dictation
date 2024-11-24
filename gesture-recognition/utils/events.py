@@ -3,7 +3,7 @@ from enum import StrEnum
 from logging import warning
 from typing import Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_serializer
 
 
 class ControlEvent(StrEnum):
@@ -57,6 +57,27 @@ class GestureEndEvent:
 class GestureEvent(BaseModel):
     type: GestureEventType
     event: Union[GestureStartEvent, GestureEndEvent]
+
+    @model_serializer
+    def serialize(self):
+        match self.type:
+            case GestureEventType.Start:
+                return {
+                    "Start": {
+                        "punctuation": self.event.punctuation,
+                        "start_time": self.event.start_time,
+                    }
+                }
+            case GestureEventType.End:
+                assert isinstance(self.event, GestureEndEvent)
+                return {
+                    "End": {
+                        "punctuation": self.event.punctuation,
+                        "start_time": self.event.start_time,
+                        "end_time": self.event.end_time,
+                        "confidence": self.event.confidence,
+                    }
+                }
 
     class Config:
         use_enum_values = True
