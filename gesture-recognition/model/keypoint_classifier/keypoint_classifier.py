@@ -34,6 +34,6 @@ class KeyPointClassifier(object):
 
         result_index = np.argmax(np.squeeze(result))
 
-        result_confidence = np.squeeze(result)[result_index]
+        result_confidence = float(np.squeeze(result)[result_index])
 
         return result_index, result_confidence
