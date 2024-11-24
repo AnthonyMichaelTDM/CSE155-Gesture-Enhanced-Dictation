@@ -18,19 +18,12 @@ from mediapipe.python.solutions import hands as mp_hands
 
 from utils.cvfpscalc import CvFpsCalc
 from utils.draw import (
-    draw_landmarks,
-    draw_info_text,
-    draw_info,
+    BoundingBoxType,
     draw_bounding_rect,
+    draw_info,
+    draw_info_text,
+    draw_landmarks,
 )
-from model import KeyPointClassifier
-
-from redis import Redis
-from redis.retry import Retry
-from redis.backoff import ExponentialBackoff
-import time
-import pygame
-import threading
 
 PUNCTUATION_MARKS = [".", ",", "?", "!", '"']
 
@@ -453,7 +446,9 @@ def main():
                     gesture_detected = True
                     gesture_start_time = time.time()
                     # makes the rectangle orange as the dwell time is processing
-                    display = draw_bounding_rect(use_brect, display, brect, "dwell")
+                    display = draw_bounding_rect(
+                        use_brect, display, brect, BoundingBoxType.Dwell
+                    )
                 elif (
                     keypoint_classifier_labels[hand_sign_id] != "Neutral"
                     and time.time() - gesture_start_time >= dwell_time
@@ -462,7 +457,9 @@ def main():
                     # Dwell time met, push to queue only once
                     redis_connection.rpush("gesture_queue", val_to_push)
                     # makes the rectangle green when the val is queued successfully
-                    display = draw_bounding_rect(use_brect, display, brect, "success")
+                    display = draw_bounding_rect(
+                        use_brect, display, brect, BoundingBoxType.Success
+                    )
                     ui.play_chime()
                     print(f"Pushed {val_to_push} to queue.")
 
