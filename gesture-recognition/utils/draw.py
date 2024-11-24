@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Optional
 import cv2
 from cv2.typing import MatLike, Point, Rect
@@ -213,18 +214,31 @@ def draw_landmarks(
     return image
 
 
+class BoundingBoxType(StrEnum):
+    """
+    The type of bounding box to draw
+    """
+
+    Dwell = "dwell"
+    Success = "success"
+    Default = "default"
+
+
 def draw_bounding_rect(
-    use_brect: bool, image: MatLike, brect: cv2.typing.Rect, val="default"
+    use_brect: bool,
+    image: MatLike,
+    brect: cv2.typing.Rect,
+    val: BoundingBoxType = BoundingBoxType.Default,
 ) -> MatLike:
     if use_brect:
         x, y, w, h = brect
         pt1 = (x, y)
         pt2 = (x + w, y + h)
 
-        if val == "dwell":
+        if val == BoundingBoxType.Dwell:
             # Outer rectangle (orange)
             cv2.rectangle(image, pt1, pt2, (0, 165, 255), 1)
-        elif val == "success":
+        elif val == BoundingBoxType.Success:
             # Outer rectangle (green)
             cv2.rectangle(image, pt1, pt2, (0, 255, 0), 1)
         else:
