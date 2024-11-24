@@ -70,6 +70,9 @@ fn main() -> anyhow::Result<()> {
                 info!("starting punctuation inference");
                 started = true;
             }
+            Event::Control(ControlEvent::StopRecording) => {
+                started = false;
+            }
             Event::Control(ControlEvent::Stop) => {
                 info!("stopping punctuation inference and uploading results");
                 started = false;

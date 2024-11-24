@@ -30,6 +30,8 @@ pub enum ControlEvent {
     Start,
     /// Stop the punctuation inference process and upload the results
     Stop,
+    /// Tells the Speech to Text component to stop recording and begin transcribing the audio
+    StopRecording,
     /// Reset the punctuation inference process
     Reset,
     /// Exit the punctuation inference process (stop execution)
@@ -178,6 +180,7 @@ mod serialization_tests {
     )]
     #[case::control_event_start(r#""Start""#, Event::Control(ControlEvent::Start))]
     #[case::control_event_stop(r#""Stop""#, Event::Control(ControlEvent::Stop))]
+    #[case::control_event_stop_recording(r#""Stop Recording""#, Event::Control(ControlEvent::StopRecording))]
     #[case::control_event_reset(r#""Reset""#, Event::Control(ControlEvent::Reset))]
     #[case::control_event_exit(r#""Exit""#, Event::Control(ControlEvent::Exit))]
     fn test_deserialization(#[case] value: &str, #[case] expected: Event) {
@@ -213,6 +216,7 @@ mod serialization_tests {
     )]
     #[case::control_event_start(Event::Control(ControlEvent::Start), r#""Start""#)]
     #[case::control_event_stop(Event::Control(ControlEvent::Stop), r#""Stop""#)]
+    #[case::control_event_stop_recording(Event::Control(ControlEvent::StopRecording), r#""Stop Recording""#)]
     #[case::control_event_reset(Event::Control(ControlEvent::Reset), r#""Reset""#)]
     #[case::control_event_exit(Event::Control(ControlEvent::Exit), r#""Exit""#)]
     fn test_serialization(#[case] event: Event, #[case] expected: &str) {
