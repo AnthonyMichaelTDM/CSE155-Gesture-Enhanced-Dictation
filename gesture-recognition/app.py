@@ -9,7 +9,6 @@ import itertools
 from logging import info, warning
 import logging
 import os
-from tkinter import font
 from typing import Literal, Optional, override
 
 import cv2
@@ -218,10 +217,10 @@ class UI:
         # - text should be selectable
 
         image = cv2.transpose(image)
-        image = pygame.surfarray.make_surface(image)
+        display = pygame.surfarray.make_surface(image)
 
         self.window.fill((255, 255, 255))
-        self.window.blit(image, (50, 50))
+        self.window.blit(display, (50, 50))
 
         # Draw buttons with rounded edges and thin black border
         pygame.draw.rect(
