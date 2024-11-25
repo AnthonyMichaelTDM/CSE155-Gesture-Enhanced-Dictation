@@ -11,7 +11,6 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from logging import error, info, warning
-from turtle import st
 from typing import TYPE_CHECKING, Callable, Literal, Optional, override
 
 import cv2
@@ -23,6 +22,8 @@ from redis import Redis
 from redis.backoff import ExponentialBackoff
 from redis.client import PubSub
 from redis.retry import Retry
+import tkinter as tk
+from PIL import Image, ImageTk
 
 from model import KeyPointClassifier
 from utils.cvfpscalc import CvFpsCalc
@@ -70,20 +71,6 @@ class Mode(StrEnum):
 
     def is_keypoint(self):
         return self == Mode.KEYPOINT
-
-    def pick_class_number(self, key: int):
-        """If in keypoint training mode, returns the number pressed.
-        Used to select what label to assign to keypoint data when in KEYPOINT_TRAINING mode.
-
-        Returns:
-            Optional[int]: The number pressed, or None if the mode is not KEYPOINT_TRAINING.
-        """
-        if not self.is_keypoint():
-            return None
-
-        if 48 <= key <= 57:
-            return key - 48
-        return None
 
     def log_data(self, number: int | None, landmark_list: list[tuple[float, float]]):
         if not self.is_keypoint() or number is None:
@@ -190,36 +177,86 @@ class HandDetector(mp_hands.Hands):
 
 class UI:
     def __init__(self, redis_connection: Redis, image_width=960, image_height=540):
-        pygame.init()
         pygame.mixer.init()
-        self.window = pygame.display.set_mode((1024, 768))
+        self.root = tk.Tk()
+        self.root.title("Gesture Enhanced Dictation")
+        self.image_width = image_width
+        self.image_height = image_height
         self.muted = False
-        self.chime_file = "Chime.mp3"
         self.running = True
         self.paused = True
         self.recording_start_time = time.time()
-        self.mute_button = pygame.Rect(
-            10 + image_width - 100, image_height + 50, 100, 50
-        )
-        self.start_stop_button = pygame.Rect(50, image_height + 50, 100, 50)
-        self.text_box = pygame.Rect(50, image_height + 120, image_width - 40, 200)
+        self.chime_file = "Chime.mp3"
         self.text = "Waiting to start recording..."
-        self.image_width = image_width
-        self.image_height = image_height
-        self.font = pygame.font.Font(None, 36)
-        self.font_height = self.font.get_height()
 
         self.redis = redis_connection
         self.punctuated_text_listener = RedisEventListener(redis_connection)
         self.punctuated_text_listener.subscribe(
             PUNCTUATED_TEXT_CHANNEL, lambda x: self.puntuated_text_callback(x)
         )
+        self.last_number_keypress = None
+
+        self.create_widgets()
+        self.bind_events()
+
+    def create_widgets(self):
+        self.canvas = tk.Canvas(
+            self.root, width=self.image_width, height=self.image_height
+        )
+        self.canvas.pack(padx=20, pady=20)
+
+        self.button_frame = tk.Frame(self.root)
+        self.button_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        self.start_stop_button = tk.Button(
+            self.button_frame, text="Start", command=self.handle_start_stop_button
+        )
+        self.start_stop_button.pack(side=tk.LEFT, padx=5)
+
+        self.mute_button = tk.Button(
+            self.button_frame, text="Mute", command=self.toggle_mute
+        )
+        self.mute_button.pack(side=tk.RIGHT, padx=5)
+
+        self.text_box = tk.Text(self.root, height=10, width=50)
+        self.text_box.pack(fill=tk.X, padx=20, pady=20)
+        self.text_box.insert(tk.END, self.text)
+        self.text_box.config(state=tk.DISABLED)  # Make the text box read-only
+
+    def bind_events(self):
+        self.root.bind("<space>", lambda _: self.handle_start_stop_button())
+        self.root.bind("<m>", lambda _: self.toggle_mute())
+        self.root.bind("<Escape>", lambda _: self.on_esc())
+        for i in range(10):
+            self.root.bind(str(i), self.on_number_keypress)
+
+    def on_esc(self):
+        self.running = False
+
+    def on_number_keypress(self, event):
+        if MODE.is_keypoint():
+            number = int(event.char)
+
+            self.last_number_keypress = (
+                (number if number != self.last_number_keypress else None)
+                if number is not None
+                else self.last_number_keypress
+            )
+
+    def exit(self):
+        self.root.quit()
+
+    def update_text(self, text):
+        self.text = text
+        self.text_box.delete(1.0, tk.END)
+        self.text_box.insert(tk.END, self.text)
+        self.text_box.config(state=tk.DISABLED)
 
     def puntuated_text_callback(self, text):
         if not self.paused:
             error("Received punctuated text while recording is still ongoing")
 
-        self.text = text
+        self.update_text(text)
 
     def handle_start_stop_button(self):
         """Called when the start/stop button is clicked
@@ -227,21 +264,21 @@ class UI:
         Toggles the paused state and updates button text,
         also will send a control signal to redis to tell the other
         components to start/stop processing
-
-        TODO: implement redis stuff
-        TODO: need a better way for the punctuation component to wait for the speech-to-text component to finish, it can't just run the inference as soon as it gets the stop signal
-
         """
 
         self.paused = not self.paused
 
         if self.paused:
             self.redis.publish(CONTROL_CHANNEL, ControlEvent.stop_recording)
-            self.text = "Recording stopped, please wait for processing to finish... "
+            self.update_text(
+                "Recording stopped, please wait for processing to finish... "
+            )
+            self.start_stop_button.config(text="Start")
         else:
             self.redis.publish(CONTROL_CHANNEL, ControlEvent.reset)
             self.redis.publish(CONTROL_CHANNEL, ControlEvent.start)
-            self.text = "Recording..."
+            self.update_text("Recording...")
+            self.start_stop_button.config(text="Stop")
             self.recording_start_time = time.time()
 
         pass
@@ -249,8 +286,10 @@ class UI:
     def toggle_mute(self):
         self.muted = not self.muted
         if self.muted:
+            self.mute_button.config(text="Unmute")
             info("Muted")
         else:
+            self.mute_button.config(text="Mute")
             info("Unmuted")
 
     def play_chime(self):
@@ -263,92 +302,16 @@ class UI:
             target=play_chime_thread, args=(self.chime_file, self.muted)
         ).start()
 
-    def process_events(self) -> int | None:
-        """Process pygame events
-
-        Returns:
-            int | None: the keypoint class number if a number key was pressed and the mode is KEYPOINT_TRAINING, else None
-        """
-        for event in pygame.event.get():
-            match event.type:
-                case pygame.QUIT:
-                    self.running = False
-                    return
-                case pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        self.running = False
-                        return
-                    if event.key == pygame.K_m:
-                        self.toggle_mute()
-                    if event.key == pygame.K_SPACE:
-                        self.handle_start_stop_button()
-                    if MODE.is_keypoint():
-                        return MODE.pick_class_number(event.key)
-                case pygame.MOUSEBUTTONDOWN:
-                    if self.mute_button.collidepoint(event.pos):
-                        self.toggle_mute()
-                    if self.start_stop_button.collidepoint(event.pos):
-                        self.handle_start_stop_button()
-
     def draw(self, image: MatLike):
         # TODO: the text box should:
-        # - word wrap
-        # - be able to scroll up and down
-        # - have a thin border
         # - have an icon in the top right corner to copy the text to the clipboard
-        # - text should be selectable
 
-        image = cv2.transpose(image)
-        display = pygame.surfarray.make_surface(image)
+        display = Image.fromarray(image)
+        display = ImageTk.PhotoImage(display)
 
-        self.window.fill((255, 255, 255))
-        self.window.blit(display, (50, 50))
-
-        # Draw text box
-        pygame.draw.rect(self.window, (102, 102, 255), self.text_box, border_radius=25)
-        pygame.draw.rect(self.window, (0, 0, 0), self.text_box, 2, border_radius=25)
-        self.window.blit(display, (50, 50))
-
-        # Draw buttons with rounded edges and thin black border
-        pygame.draw.rect(
-            self.window, (255, 255, 255), self.mute_button, border_radius=10
-        )
-        pygame.draw.rect(self.window, (0, 0, 0), self.mute_button, 2, border_radius=10)
-        pygame.draw.rect(
-            self.window, (255, 255, 255), self.start_stop_button, border_radius=10
-        )
-        pygame.draw.rect(
-            self.window, (0, 0, 0), self.start_stop_button, 2, border_radius=10
-        )
-
-        mute_text = self.font.render(
-            "Unmute" if self.muted else "Mute", True, (0, 0, 0)
-        )
-        start_stop_text = self.font.render(
-            "Start" if self.paused else "Stop", True, (0, 0, 0)
-        )
-        text = self.font.render(self.text, True, (0, 0, 0))
-
-        mute_text_width = mute_text.get_width()
-        start_stop_text_width = start_stop_text.get_width()
-
-        self.window.blit(
-            mute_text,
-            (
-                10 + self.image_width - 100 + (100 - mute_text_width) // 2,
-                self.image_height + 50 + self.font_height // 2,
-            ),
-        )
-        self.window.blit(
-            start_stop_text,
-            (
-                50 + (100 - start_stop_text_width) // 2,
-                self.image_height + 50 + self.font_height // 2,
-            ),
-        )
-        self.window.blit(text, (70, self.image_height + 130 + 10))
-
-        pygame.display.flip()
+        self.canvas.create_image(0, 0, image=display, anchor=tk.NW)
+        self.root.update_idletasks()
+        self.root.update()
 
 
 def get_args():
@@ -491,11 +454,7 @@ def main():
             fps = cvFpsCalc.get()
 
             # Process Events  ####################################################
-            keypoint_training_class = (
-                (number if number != keypoint_training_class else None)
-                if (number := ui.process_events()) is not None
-                else keypoint_training_class
-            )
+            keypoint_training_class = ui.last_number_keypress
 
             # Camera capture #####################################################
             image = capture_image(cap)
