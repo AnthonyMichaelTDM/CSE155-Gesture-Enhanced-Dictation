@@ -180,6 +180,7 @@ class UI:
         pygame.mixer.init()
         self.root = tk.Tk()
         self.root.title("Gesture Enhanced Dictation")
+        self.root.configure(bg="white")
         self.image_width = image_width
         self.image_height = image_height
         self.muted = False
@@ -200,25 +201,34 @@ class UI:
         self.bind_events()
 
     def create_widgets(self):
+
         self.canvas = tk.Canvas(
-            self.root, width=self.image_width, height=self.image_height
+            self.root, width=self.image_width, height=self.image_height, bg="white"
         )
         self.canvas.pack(padx=20, pady=20)
 
-        self.button_frame = tk.Frame(self.root)
+        self.button_frame = tk.Frame(self.root, bg="white")
         self.button_frame.pack(fill=tk.X, padx=20, pady=10)
 
         self.start_stop_button = tk.Button(
-            self.button_frame, text="Start", command=self.handle_start_stop_button
+            self.button_frame,
+            text="Start",
+            command=self.handle_start_stop_button,
+            bg="white",
+            fg="black",
         )
         self.start_stop_button.pack(side=tk.LEFT, padx=5)
 
         self.mute_button = tk.Button(
-            self.button_frame, text="Mute", command=self.toggle_mute
+            self.button_frame,
+            text="Mute",
+            command=self.toggle_mute,
+            bg="white",
+            fg="black",
         )
         self.mute_button.pack(side=tk.RIGHT, padx=5)
 
-        self.text_box = tk.Text(self.root, height=10, width=50)
+        self.text_box = tk.Text(self.root, height=10, width=50, bg="white", fg="black")
         self.text_box.pack(fill=tk.X, padx=20, pady=20)
         self.text_box.insert(tk.END, self.text)
         self.text_box.config(state=tk.DISABLED)  # Make the text box read-only
