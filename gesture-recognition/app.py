@@ -258,6 +258,7 @@ class UI:
 
     def update_text(self, text):
         self.text = text
+        self.text_box.config(state=tk.NORMAL)
         self.text_box.delete(1.0, tk.END)
         self.text_box.insert(tk.END, self.text)
         self.text_box.config(state=tk.DISABLED)
@@ -266,7 +267,7 @@ class UI:
         if not self.paused:
             error("Received punctuated text while recording is still ongoing")
 
-        self.update_text(text)
+        self.text = text
 
     def handle_start_stop_button(self):
         """Called when the start/stop button is clicked
@@ -319,6 +320,7 @@ class UI:
         display = Image.fromarray(image)
         display = ImageTk.PhotoImage(display)
 
+        self.update_text(self.text)  # workaround to avoid updating text within a thread
         self.canvas.create_image(0, 0, image=display, anchor=tk.NW)
         self.root.update_idletasks()
         self.root.update()
