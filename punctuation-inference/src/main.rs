@@ -2,7 +2,7 @@ use std::sync::mpsc;
 
 use log::{debug, error, info, warn};
 use punctuation_inference::{
-    events::{ControlEvent, Event},
+    events::{ControlEvent, Event, GestureEvent},
     redis::Redis,
     PunctuationInference, PunctuationInferenceBuilder,
 };
@@ -48,6 +48,8 @@ fn main() -> anyhow::Result<()> {
     let mut punctuation_engine = PunctuationInferenceBuilder::default().build();
     let mut started = false;
 
+    let mut last_gesture_start = None;
+
     while let Ok(msg) = rx.recv() {
         let event = match msg.get_payload::<Event>() {
             Ok(event) => event,
@@ -67,6 +69,12 @@ fn main() -> anyhow::Result<()> {
                 punctuation_engine.register_word_event(word_event);
             }
             Event::Gesture(gesture_event) if started => {
+                if let GestureEvent::Start { .. } = gesture_event {
+                    last_gesture_start = Some((gesture_event, std::time::Instant::now()));
+                } else {
+                    last_gesture_start = None;
+                }
+
                 info!("gesture event: {:?}", gesture_event);
                 punctuation_engine.register_gesture_event(gesture_event);
             }
@@ -75,7 +83,17 @@ fn main() -> anyhow::Result<()> {
                 started = true;
             }
             Event::Control(ControlEvent::StopRecording) => {
-                started = false;
+                // if the last gesture event received was a start event, we should artificially add an end event for it
+                if let Some((gesture_event, start_time)) = last_gesture_start {
+                    let end_time = start_time.elapsed().as_secs_f64();
+                    let end_event = GestureEvent::End {
+                        punctuation: gesture_event.punctuation(),
+                        start_time: gesture_event.start_time(),
+                        end_time: end_time,
+                        confidence: 1.0,
+                    };
+                    punctuation_engine.register_gesture_event(end_event);
+                }
             }
             Event::Control(ControlEvent::Stop) => {
                 info!("stopping punctuation inference and uploading results");
