@@ -19,6 +19,8 @@ from redis.client import PubSub
 from redis.retry import Retry
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 # variable to tell if the application is running in production (should wait for a redis connection)
 PRODUCTION = os.getenv("ENVIRONMENT", "development") == "production"
@@ -378,9 +380,8 @@ if __name__ == "__main__":
     redis_conn: Optional[Redis] = None
     if PRODUCTION:
         redis_conn = Redis(
-            host="redis",
-            # host="127.0.0.1",
-            port=6379,
+            host=REDIS_HOST,
+            port=REDIS_PORT,
             retry_on_timeout=True,
             retry=Retry(backoff=ExponentialBackoff(), retries=3),
         )

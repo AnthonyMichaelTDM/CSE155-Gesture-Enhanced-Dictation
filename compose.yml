@@ -5,6 +5,8 @@ services:
       context: punctuation-inference
     environment:
       - RUST_LOG=info
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
   speech-to-text:
     build:
       # dockerfile is located at speech-to-text/Dockerfile
@@ -13,6 +15,8 @@ services:
       - ENVIRONMENT=production
       - PULSE_SERVER=unix:/app/pulseaudio_socket
       - LOG_LEVEL=INFO
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       # temporary debug variables
       # - SKIP_RECORDING=True
     devices:
@@ -36,6 +40,8 @@ services:
       - LOG_LEVEL=INFO
       - DISPLAY=:0
       - PULSE_SERVER=unix:/app/pulseaudio_socket
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     devices:
       - "/dev/video0:/dev/video0"
       - "/dev/snd:/dev/snd"

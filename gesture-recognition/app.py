@@ -56,6 +56,8 @@ DWELL_TIME = 0.25  # second(s)
 MIN_GESTURE_TIME = 0.05  # second(s)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 PUNCTUATED_TEXT_CHANNEL = "punctuation_text"
 CONTROL_CHANNEL = "control"
@@ -443,9 +445,8 @@ def main():
 
     #  define redis queue #####################################################
     redis_connection = Redis(
-        host="redis",
-        # host="127.0.0.1",
-        port=6379,
+        host=REDIS_HOST, 
+        port=REDIS_PORT,
         retry_on_timeout=True,
         retry=Retry(backoff=ExponentialBackoff(), retries=3),
     )

@@ -12,6 +12,10 @@ fn main() -> anyhow::Result<()> {
     // initialize logging
     env_logger::init();
 
+    let redis_port = std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
+    let redis_host = std::env::var("REDIS_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let redis_url = format!("redis://{}:{}", redis_host, redis_port);
+
     let (tx, rx) = mpsc::channel();
 
     let (stop_tx, stop_rx) = mpsc::channel();
@@ -21,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         let _redis = {
             let mut redis = None;
             for _ in 0..10 {
-                match Redis::new("redis://redis:6379") {
+                match Redis::new(&redis_url) {
                     Ok(r) => {
                         redis = Some(r);
                         break;
