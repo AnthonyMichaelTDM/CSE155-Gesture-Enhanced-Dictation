@@ -19,8 +19,8 @@ services:
       - REDIS_PORT=6379
       # temporary debug variables
       # - SKIP_RECORDING=True
-    devices:
-      - "/dev/snd:/dev/snd"
+    # devices:
+    # - "/dev/snd:/dev/snd"
     group_add:
       - "audio"
     volumes:
@@ -39,14 +39,14 @@ services:
       # - MODE=KEYPOINT_TRAINING
       - LOG_LEVEL=INFO
       - DISPLAY=:0
-      - PULSE_SERVER=unix:/app/pulseaudio_socket
+      # - PULSE_SERVER=unix:/app/pulseaudio_socket
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     devices:
       - "/dev/video0:/dev/video0"
-      - "/dev/snd:/dev/snd"
-    group_add:
-      - "audio"
+      # - "/dev/snd:/dev/snd"
+    # group_add:
+    #   - "audio"
     volumes:
       # attach the keypoint csv file so that the training data can be saved
       - ./gesture-recognition/model/keypoint_classifier/keypoint.csv:/app/model/keypoint_classifier/keypoint.csv

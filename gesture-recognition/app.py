@@ -179,7 +179,7 @@ class HandDetector(mp_hands.Hands):
 
 class UI:
     def __init__(self, redis_connection: Redis, image_width=960, image_height=540):
-        pygame.mixer.init()
+        # pygame.mixer.init()
         self.root = tk.Tk()
         self.root.title("Gesture Enhanced Dictation")
         self.root.configure(bg="white")
@@ -189,7 +189,7 @@ class UI:
         self.running = True
         self.paused = True
         self.recording_start_time = time.time()
-        self.chime_file = "Chime.mp3"
+        # self.chime_file = "Chime.mp3"
         self.text = "Waiting to start recording..."
 
         self.redis = redis_connection
@@ -305,15 +305,15 @@ class UI:
             self.mute_button.config(text="Mute")
             info("Unmuted")
 
-    def play_chime(self):
-        def play_chime_thread(chime_file, muted):
-            if not muted:
-                pygame.mixer.music.load(chime_file)
-                pygame.mixer.music.play()
+    # def play_chime(self):
+    #     def play_chime_thread(chime_file, muted):
+    #         if not muted:
+    #             pygame.mixer.music.load(chime_file)
+    #             pygame.mixer.music.play()
 
-        threading.Thread(
-            target=play_chime_thread, args=(self.chime_file, self.muted)
-        ).start()
+    #     threading.Thread(
+    #         target=play_chime_thread, args=(self.chime_file, self.muted)
+    #     ).start()
 
     def draw(self, image: MatLike):
         # TODO: the text box should:
@@ -445,7 +445,7 @@ def main():
 
     #  define redis queue #####################################################
     redis_connection = Redis(
-        host=REDIS_HOST, 
+        host=REDIS_HOST,
         port=REDIS_PORT,
         retry_on_timeout=True,
         retry=Retry(backoff=ExponentialBackoff(), retries=3),
