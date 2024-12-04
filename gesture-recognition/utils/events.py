@@ -14,7 +14,7 @@ class ControlEvent(StrEnum):
     # Tell other components to start
     start = '"Start"'
     # Tell speech-to-text to stop recording audio and start transcribing
-    stop_recording = '"Stop Recording"'
+    stop_recording = '"StopRecording"'
     # Tells the components to exit
     exit = '"Exit"'
     # Tells the punctuation inference component to clear its internal state

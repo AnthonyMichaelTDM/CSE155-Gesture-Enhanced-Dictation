@@ -57,7 +57,7 @@ class ControlEvent(StrEnum):
     # Start recording audio
     start = '"Start"'
     # Stop recording audio and start transcribing the audio
-    stop_recording = '"Stop Recording"'
+    stop_recording = '"StopRecording"'
     # Tell the punctuation service to stop listening for word/gesture events, and process and upload its results
     stop = '"Stop"'
     # Tells the components to exit
